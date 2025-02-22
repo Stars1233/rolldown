@@ -21,8 +21,8 @@ anyhow              = { workspace = true }
 arcstr              = { workspace = true }
 bitflags            = { workspace = true }
 dashmap             = { workspace = true }
-either              = { workspace = true }
-glob-match          = { workspace = true }
+derive_more         = { workspace = true }
+fast-glob           = { workspace = true }
 itertools           = { workspace = true }
 oxc                 = { workspace = true }
 oxc_index           = { workspace = true }

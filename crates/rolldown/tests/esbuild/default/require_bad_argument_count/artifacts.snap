@@ -8,23 +8,11 @@ snapshot_kind: text
 
 ```text
 [UNRESOLVED_IMPORT] Warning: Could not resolve "a" in entry.js
-   ╭─[entry.js:2:9]
+   ╭─[ entry.js:2:9 ]
    │
  2 │ require("a", "b")
    │         ─┬─  
    │          ╰─── Module not found, treating it as an external dependency
-───╯
-
-```
-## UNRESOLVED_IMPORT
-
-```text
-[UNRESOLVED_IMPORT] Warning: Could not resolve "a" in entry.js
-   ╭─[entry.js:6:10]
-   │
- 6 │     require("a", "b")
-   │             ─┬─  
-   │              ╰─── Module not found, treating it as an external dependency
 ───╯
 
 ```
@@ -36,10 +24,10 @@ snapshot_kind: text
 
 
 //#region entry.js
-require();
+__require();
 __require("a", "b");
 try {
-	require();
+	__require();
 	__require("a", "b");
 } catch {}
 

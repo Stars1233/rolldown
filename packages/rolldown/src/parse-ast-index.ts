@@ -1,3 +1,4 @@
+import { Program } from '@oxc-project/types'
 import { parseSync, parseAsync } from './binding'
 import type { ParseResult, ParserOptions } from './binding'
 import { locate } from './log/locate-character'
@@ -56,7 +57,7 @@ function normalizeParseError(
       e.message +
       '\n' +
       e.labels
-        .map((label) => {
+        .map((label: any) => {
           const location = locate(sourceText, label.start, { offsetLine: 1 })
           if (!location) {
             return
@@ -69,22 +70,40 @@ function normalizeParseError(
   return error(logParseError(message))
 }
 
+const defaultParserOptions: ParserOptions = {
+  lang: 'js',
+  preserveParens: false,
+  convertSpanUtf16: true,
+}
+
 // The api compat to rollup `parseAst` and `parseAstAsync`.
 
 export function parseAst(
-  filename: string,
   sourceText: string,
   options?: ParserOptions | undefined | null,
-): ParseResult {
-  return wrap(parseSync(filename, sourceText, options), sourceText)
+  filename?: string,
+): Program {
+  return wrap(
+    parseSync(filename ?? 'file.js', sourceText, {
+      ...defaultParserOptions,
+      ...options,
+    }),
+    sourceText,
+  ).program
 }
 
 export async function parseAstAsync(
-  filename: string,
   sourceText: string,
   options?: ParserOptions | undefined | null,
-): Promise<ParseResult> {
-  return wrap(await parseAsync(filename, sourceText, options), sourceText)
+  filename?: string,
+): Promise<Program> {
+  return wrap(
+    await parseAsync(filename ?? 'file.js', sourceText, {
+      ...defaultParserOptions,
+      ...options,
+    }),
+    sourceText,
+  ).program
 }
 
 export type { ParseResult, ParserOptions }

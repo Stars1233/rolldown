@@ -46,7 +46,7 @@ export declare class BindingNormalizedOptions {
   get cssChunkFilenames(): string | undefined
   get entryFilenames(): string | undefined
   get chunkFilenames(): string | undefined
-  get assetFilenames(): string
+  get assetFilenames(): string | undefined
   get dir(): string | null
   get file(): string | null
   get format(): 'es' | 'cjs' | 'app' | 'iife' | 'umd'
@@ -63,7 +63,7 @@ export declare class BindingNormalizedOptions {
   get globals(): Record<string, string> | undefined
   get hashCharacters(): 'base64' | 'base36' | 'hex'
   get sourcemapDebugIds(): boolean
-  get minify(): boolean
+  get minify(): false | BindingMinifyOptions
   get polyfillRequire(): boolean
   get comments(): 'none' | 'preserve-legal'
 }
@@ -103,7 +103,7 @@ export declare class BindingOutputs {
 export declare class BindingPluginContext {
   load(specifier: string, sideEffects: BindingHookSideEffects | undefined, fn: () => void): Promise<void>
   resolve(specifier: string, importer?: string | undefined | null, extraOptions?: BindingPluginContextResolveOptions | undefined | null): Promise<BindingPluginContextResolvedId | null>
-  emitFile(file: BindingEmittedAsset): string
+  emitFile(file: BindingEmittedAsset, assetFilename?: string | undefined | null, fnSanitizedFileName?: string | undefined | null): string
   emitChunk(file: BindingEmittedChunk): string
   getFileName(referenceId: string): string
   getModuleInfo(moduleId: string): BindingModuleInfo | null
@@ -113,6 +113,7 @@ export declare class BindingPluginContext {
 
 export declare class BindingRenderedModule {
   get code(): string | null
+  get renderedExports(): Array<string>
 }
 
 export declare class BindingTransformPluginContext {
@@ -157,6 +158,7 @@ export declare class MagicString {
   getUtf16ByteOffset(offset: number): number
   length(): number
   toString(): string
+  hasChanged(): boolean
   append(input: string): this
   appendLeft(index: number, input: string): this
   appendRight(index: number, input: string): this
@@ -166,6 +168,20 @@ export declare class MagicString {
   prependRight(index: number, input: string): this
   relocate(start: number, end: number, to: number): this
   remove(start: number, end: number): this
+  generateMap(options?: Partial<GenerateDecodedMapOptions>): {
+    toString: () => string;
+    toUrl: () => string;
+    toMap: () => {
+      file?: string
+      mappings: string
+      names: Array<string>
+      sourceRoot?: string
+      sources: Array<string>
+      sourcesContent?: Array<string>
+      version: number
+      x_google_ignoreList?: Array<number>
+    }
+  }
 }
 
 export declare class ParallelJsPluginRegistry {
@@ -216,6 +232,9 @@ export interface BindingAdvancedChunksOptions {
   minSize?: number
   minShareCount?: number
   groups?: Array<BindingMatchGroup>
+  maxSize?: number
+  minModuleSize?: number
+  maxModuleSize?: number
 }
 
 export interface BindingAliasPluginAlias {
@@ -269,6 +288,12 @@ export interface BindingChecksOptions {
   circularDependency?: boolean
 }
 
+export interface BindingDeferSyncScanData {
+  /** ModuleId */
+  id: string
+  sideEffects?: BindingHookSideEffects
+}
+
 export interface BindingEmittedAsset {
   name?: string
   fileName?: string
@@ -288,6 +313,7 @@ export interface BindingExperimentalOptions {
   disableLiveBindings?: boolean
   viteMode?: boolean
   resolveNewUrlToAsset?: boolean
+  hmr?: boolean
 }
 
 export interface BindingGeneralHookFilter {
@@ -392,6 +418,7 @@ export interface BindingInputOptions {
   watch?: BindingWatchOption
   keepNames?: boolean
   checks?: BindingChecksOptions
+  deferSyncScanData?: undefined | (() => BindingDeferSyncScanData[])
 }
 
 export interface BindingJsonPluginConfig {
@@ -439,6 +466,21 @@ export interface BindingMatchGroup {
   priority?: number
   minSize?: number
   minShareCount?: number
+  minModuleSize?: number
+  maxModuleSize?: number
+  maxSize?: number
+}
+
+export interface BindingMfManifest {
+  filePath?: string
+  disableAssetsAnalyze?: boolean
+  fileName?: string
+}
+
+export interface BindingMinifyOptions {
+  mangle: boolean
+  compress: boolean
+  removeWhitespace: boolean
 }
 
 export interface BindingModuleFederationPluginOption {
@@ -447,6 +489,9 @@ export interface BindingModuleFederationPluginOption {
   exposes?: Record<string, string>
   remotes?: Array<BindingRemote>
   shared?: Record<string, BindingShared>
+  runtimePlugins?: Array<string>
+  manifest?: BindingMfManifest
+  getPublicPath?: string
 }
 
 export interface BindingModulePreloadPolyfillPluginConfig {
@@ -454,8 +499,8 @@ export interface BindingModulePreloadPolyfillPluginConfig {
 }
 
 export interface BindingModules {
-  value: Array<BindingRenderedModule>
-  idToIndex: Record<string, number>
+  values: Array<BindingRenderedModule>
+  keys: Array<string>
 }
 
 export interface BindingModuleSideEffectsRule {
@@ -471,11 +516,12 @@ export interface BindingNotifyOption {
 
 export interface BindingOutputOptions {
   name?: string
-  assetFileNames?: string
+  assetFileNames?: string | ((chunk: BindingPreRenderedAsset) => string)
   entryFileNames?: string | ((chunk: PreRenderedChunk) => string)
   chunkFileNames?: string | ((chunk: PreRenderedChunk) => string)
   cssEntryFileNames?: string | ((chunk: PreRenderedChunk) => string)
   cssChunkFileNames?: string | ((chunk: PreRenderedChunk) => string)
+  sanitizeFileName?: boolean | ((name: string) => string)
   banner?: (chunk: RenderedChunk) => MaybePromise<VoidNullable<string>>
   dir?: string
   file?: string
@@ -495,7 +541,7 @@ export interface BindingOutputOptions {
   sourcemapIgnoreList?: (source: string, sourcemapPath: string) => boolean
   sourcemapDebugIds?: boolean
   sourcemapPathTransform?: (source: string, sourcemapPath: string) => string
-  minify?: boolean
+  minify?: boolean | 'dce-only' | BindingMinifyOptions
   advancedChunks?: BindingAdvancedChunksOptions
   comments?: 'none' | 'preserve-legal'
   polyfillRequire?: boolean
@@ -572,6 +618,12 @@ export declare enum BindingPluginOrder {
 export interface BindingPluginWithIndex {
   index: number
   plugin: BindingPluginOptions
+}
+
+export interface BindingPreRenderedAsset {
+  names: Array<string>
+  originalFileNames: Array<string>
+  source: BindingAssetSource
 }
 
 export interface BindingRemote {
@@ -673,6 +725,7 @@ export interface BindingWatchOption {
   skipWrite?: boolean
   include?: Array<BindingStringOrRegex>
   exclude?: Array<BindingStringOrRegex>
+  buildDelay?: number
 }
 
 export interface Comment {
@@ -690,6 +743,35 @@ export interface CompilerAssumptions {
   setPublicClassFields?: boolean
 }
 
+export interface DecoratorOptions {
+  /**
+   * Enables experimental support for decorators, which is a version of decorators that predates the TC39 standardization process.
+   *
+   * Decorators are a language feature which hasn’t yet been fully ratified into the JavaScript specification.
+   * This means that the implementation version in TypeScript may differ from the implementation in JavaScript when it it decided by TC39.
+   *
+   * @see https://www.typescriptlang.org/tsconfig/#experimentalDecorators
+   * @default false
+   */
+  legacy?: boolean
+  /**
+   * Enables emitting decorator metadata.
+   *
+   * This option the same as [emitDecoratorMetadata](https://www.typescriptlang.org/tsconfig/#emitDecoratorMetadata)
+   * in TypeScript, and it only works when `legacy` is true.
+   *
+   * @see https://www.typescriptlang.org/tsconfig/#emitDecoratorMetadata
+   * @default false
+   */
+  emitDecoratorMetadata?: boolean
+}
+
+export interface DynamicImport {
+  start: number
+  end: number
+  moduleRequest: Span
+}
+
 export interface EcmaScriptModule {
   /**
    * Has ESM syntax.
@@ -699,10 +781,12 @@ export interface EcmaScriptModule {
    * Dynamic imports `import('foo')` are ignored since they can be used in non-ESM files.
    */
   hasModuleSyntax: boolean
-  /** Import Statements. */
+  /** Import statements. */
   staticImports: Array<StaticImport>
-  /** Export Statements. */
+  /** Export statements. */
   staticExports: Array<StaticExport>
+  /** Dynamic import expressions. */
+  dynamicImports: Array<DynamicImport>
   /** Span positions` of `import.meta` */
   importMetas: Array<Span>
 }
@@ -770,13 +854,22 @@ export interface ExtensionAliasItem {
   replacements: Array<string>
 }
 
+export interface GenerateDecodedMapOptions {
+  /** The filename of the file containing the original source. */
+  source?: string
+  /** Whether to include the original content in the map's `sourcesContent` array. */
+  includeContent: boolean
+  /** Whether the mapping should be high-resolution. */
+  hires: boolean | 'boundary'
+}
+
 export type HelperMode = /**
  * Runtime mode (default): Helper functions are imported from a runtime package.
  *
  * Example:
  *
  * ```js
- * import helperName from "@babel/runtime/helpers/helperName";
+ * import helperName from "@oxc-project/runtime/helpers/helperName";
  * helperName(...arguments);
  * ```
  */
@@ -994,6 +1087,11 @@ export interface ParserOptions {
    * Default: true
    */
   preserveParens?: boolean
+  /**
+   * Default: false
+   * @experimental Only for internal usage on Rolldown and Vite.
+   */
+  convertSpanUtf16?: boolean
 }
 
 /** Parse synchronously. */
@@ -1198,6 +1296,8 @@ export interface TransformOptions {
   define?: Record<string, string>
   /** Inject Plugin */
   inject?: Record<string, string | [string, string]>
+  /** Decorator plugin */
+  decorator?: DecoratorOptions
 }
 
 export interface TransformResult {
@@ -1238,7 +1338,7 @@ export interface TransformResult {
    * Example:
    *
    * ```text
-   * { "_objectSpread": "@babel/runtime/helpers/objectSpread2" }
+   * { "_objectSpread": "@oxc-project/runtime/helpers/objectSpread2" }
    * ```
    */
   helpersUsed: Record<string, string>

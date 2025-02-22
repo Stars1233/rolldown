@@ -96,6 +96,13 @@ describe('cli options for bundling', () => {
     expect(status.exitCode).toBe(0)
     expect(cleanStdout(status.stdout)).toMatchSnapshot()
   })
+
+  it('cli default options', async () => {
+    const cwd = cliFixturesDir('cli-default-option')
+    const status = await $({ cwd })`rolldown -c`
+    expect(status.exitCode).toBe(0)
+    expect(cleanStdout(status.stdout)).toMatchSnapshot()
+  })
 })
 
 describe('config', () => {
@@ -173,7 +180,7 @@ describe('config', () => {
       expect(cleanStdout(status.stdout)).toMatchSnapshot()
     })
 
-    it('should allow multiply output + call options hook once', async () => {
+    it('should allow multiply output + call options hook once  + call outputOptions hook', async () => {
       const cwd = cliFixturesDir('config-multiply-output-with-options-hooks')
       const status = await $({
         cwd,
@@ -261,7 +268,7 @@ describe('watch cli', () => {
     controller.abort()
   })
 
-  it('should allow multiply output + + call options hook once', async () => {
+  it('should allow multiply output + call options hook once + call outputOptions hook', async () => {
     const cwd = cliFixturesDir('config-multiply-output-with-options-hooks')
     const status = await $({ cwd })`rolldown -c`
     expect(cleanStdout(status.stdout)).toMatchSnapshot()

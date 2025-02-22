@@ -10,6 +10,7 @@ use oxc::{
 use rolldown_common::{
   dynamic_import_usage::DynamicImportExportsUsage, generate_replace_this_expr_map,
   EcmaModuleAstUsage, ImportKind, ImportRecordMeta, StmtInfoMeta, ThisExprReplaceKind,
+  RUNTIME_MODULE_ID,
 };
 use rolldown_ecmascript::ToSourceString;
 use rolldown_error::BuildDiagnostic;
@@ -41,10 +42,11 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
   }
 
   fn visit_program(&mut self, program: &ast::Program<'ast>) {
+    // Custom visit
     for (idx, stmt) in program.body.iter().enumerate() {
-      self.current_stmt_info.stmt_idx = Some(idx);
+      self.current_stmt_info.stmt_idx = Some(idx.into());
       self.current_stmt_info.side_effect = SideEffectDetector::new(
-        self.scopes,
+        &self.result.ast_scope,
         self.source,
         self.comments,
         // In `NormalModule` the options is always `Some`, for `RuntimeModule` always enable annotations
@@ -54,13 +56,15 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
       )
       .detect_side_effect_of_stmt(stmt);
 
-      if cfg!(debug_assertions) {
+      #[cfg(debug_assertions)]
+      {
         self.current_stmt_info.debug_label = Some(stmt.to_source_string());
       }
 
       self.visit_statement(stmt);
       self.result.stmt_infos.add_stmt_info(std::mem::take(&mut self.current_stmt_info));
     }
+
     self.result.hashbang_range = program.hashbang.as_ref().map(GetSpan::span);
     self.result.dynamic_import_rec_exports_usage =
       std::mem::take(&mut self.dynamic_import_usage_info.dynamic_import_exports_usage);
@@ -96,9 +100,6 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
     {
       self.ast_usage.remove(EcmaModuleAstUsage::AllStaticExportPropertyAccess);
     }
-    if !self.ast_usage.contains(EcmaModuleAstUsage::ModuleRef) {
-      self.ast_usage.remove(EcmaModuleAstUsage::IsCjsReexport);
-    }
   }
 
   fn visit_binding_identifier(&mut self, ident: &ast::BindingIdentifier) {
@@ -109,7 +110,8 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
   }
 
   fn visit_for_of_statement(&mut self, it: &ast::ForOfStatement<'ast>) {
-    if it.r#await && self.is_top_level() && !self.options.format.keep_esm_import_export_syntax() {
+    let is_top_level_await = it.r#await && self.is_valid_tla_scope();
+    if is_top_level_await && !self.options.format.keep_esm_import_export_syntax() {
       self.result.errors.push(BuildDiagnostic::unsupported_feature(
         self.id.resource_id().clone(),
         self.source.clone(),
@@ -120,12 +122,16 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
         ),
       ));
     }
+    if is_top_level_await {
+      self.ast_usage.insert(EcmaModuleAstUsage::TopLevelAwait);
+    }
 
     walk::walk_for_of_statement(self, it);
   }
 
   fn visit_await_expression(&mut self, it: &ast::AwaitExpression<'ast>) {
-    if !self.options.format.keep_esm_import_export_syntax() && self.is_top_level() {
+    let is_top_level_await = self.is_valid_tla_scope();
+    if !self.options.format.keep_esm_import_export_syntax() && is_top_level_await {
       self.result.errors.push(BuildDiagnostic::unsupported_feature(
         self.id.resource_id().clone(),
         self.source.clone(),
@@ -135,6 +141,9 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
           format = self.options.format
         ),
       ));
+    }
+    if is_top_level_await {
+      self.ast_usage.insert(EcmaModuleAstUsage::TopLevelAwait);
     }
     walk::walk_await_expression(self, it);
   }
@@ -233,7 +242,9 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
 
   fn visit_property_key(&mut self, it: &ast::PropertyKey<'ast>) {
     let pre_is_nested_this_inside_class = self.is_nested_this_inside_class;
-    self.is_nested_this_inside_class = false;
+    if let Some(AstKind::ClassBody(_)) = self.visit_path.iter().rev().nth(1) {
+      self.is_nested_this_inside_class = false;
+    }
     walk::walk_property_key(self, it);
     self.is_nested_this_inside_class = pre_is_nested_this_inside_class;
   }
@@ -268,6 +279,11 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
     }
     walk::walk_declaration(self, it);
   }
+
+  fn visit_call_expression(&mut self, it: &ast::CallExpression<'ast>) {
+    self.try_extract_hmr_info_from_hot_accept_call(it);
+    walk::walk_call_expression(self, it);
+  }
 }
 
 impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
@@ -288,6 +304,26 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
           }
           "exports" => {
             self.cjs_ast_analyzer(&CjsGlobalAssignmentType::ExportsAssignment);
+          }
+          "require" => {
+            let is_dummy_record = match self.visit_path.last() {
+              Some(AstKind::CallExpression(call_expr)) => {
+                !self.process_global_require_call(call_expr)
+              }
+              Some(_) => true,
+              _ => false,
+            };
+            // should not replace require in `runtime` code
+            if is_dummy_record && self.id.as_ref() != RUNTIME_MODULE_ID {
+              let import_rec_idx = self.add_import_record(
+                "",
+                ImportKind::Require,
+                ident_ref.span,
+                ImportRecordMeta::IS_DUMMY,
+              );
+
+              self.result.imports.insert(ident_ref.span, import_rec_idx);
+            }
           }
           _ => {}
         }
@@ -328,75 +364,74 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
     ident_ref: &IdentifierReference,
   ) -> Option<()> {
     let parent = self.visit_path.last()?;
-    match parent {
-      AstKind::CallExpression(call_expr) => {
-        match ident_ref.name.as_str() {
-          "eval" => {
-            // TODO: esbuild track has_eval for each scope, this could reduce bailout range, and may
-            // improve treeshaking performance. https://github.com/evanw/esbuild/blob/360d47230813e67d0312ad754cad2b6ee09b151b/internal/js_ast/js_ast.go#L1288-L1291
-            self.result.has_eval = true;
-            self.result.warnings.push(
-              BuildDiagnostic::eval(self.id.to_string(), self.source.clone(), ident_ref.span)
-                .with_severity_warning(),
-            );
-          }
-          "require" => {
-            self.process_global_require_call(call_expr);
-          }
-          _ => {}
-        }
+    if let AstKind::CallExpression(_) = parent {
+      if ident_ref.name == "eval" {
+        // TODO: esbuild track has_eval for each scope, this could reduce bailout range, and may
+        // improve treeshaking performance. https://github.com/evanw/esbuild/blob/360d47230813e67d0312ad754cad2b6ee09b151b/internal/js_ast/js_ast.go#L1288-L1291
+        self.result.has_eval = true;
+        self.result.warnings.push(
+          BuildDiagnostic::eval(self.id.to_string(), self.source.clone(), ident_ref.span)
+            .with_severity_warning(),
+        );
       }
-      _ => {}
     }
     None
   }
 
-  fn process_global_require_call(&mut self, expr: &ast::CallExpression<'ast>) {
-    if let Some(ast::Argument::StringLiteral(request)) = &expr.arguments.first() {
-      let id = self.add_import_record(
-        request.value.as_str(),
-        ImportKind::Require,
-        request.span(),
-        if request.span().is_empty() {
-          ImportRecordMeta::IS_UNSPANNED_IMPORT
-        } else {
-          let mut is_require_used = true;
-          let mut meta = ImportRecordMeta::empty();
-          // traverse nearest ExpressionStatement and check if there are potential used
-          // skip one for CallExpression it self
-          for ancestor in self.visit_path.iter().rev().skip(1) {
-            match ancestor {
-              AstKind::ParenthesizedExpression(_) => {}
-              AstKind::ExpressionStatement(_) => {
-                meta.insert(ImportRecordMeta::IS_REQUIRE_UNUSED);
-                break;
-              }
-              AstKind::SequenceExpression(seq_expr) => {
-                // the child node has require and it is potential used
-                // the state may changed according to the child node position
-                // 1. `1, 2, (1, require('a'))` => since the last child contains `require`, and
-                //    in the last position, it is still used if it meant any other astKind
-                // 2. `1, 2, (1, require('a')), 1` => since the last child contains `require`, but it is
-                //    not in the last position, the state should change to unused
-                let last = seq_expr.expressions.last().expect("should have at least one child");
+  /// return `bool` represent if it is a global require call
+  fn process_global_require_call(&mut self, expr: &ast::CallExpression<'ast>) -> bool {
+    let (value, span) = match expr.arguments.first() {
+      Some(ast::Argument::StringLiteral(request)) => (request.value, request.span),
+      Some(ast::Argument::TemplateLiteral(request)) if request.is_no_substitution_template() => {
+        match request.quasi() {
+          Some(value) => (value, request.span),
+          None => return false,
+        }
+      }
+      _ => return false,
+    };
+    let mut init_meta = if span.is_empty() {
+      ImportRecordMeta::IS_UNSPANNED_IMPORT
+    } else {
+      let mut is_require_used = true;
+      let mut meta = ImportRecordMeta::empty();
+      // traverse nearest ExpressionStatement and check if there are potential used
+      // skip one for CallExpression it self
+      for ancestor in self.visit_path.iter().rev().skip(1) {
+        match ancestor {
+          AstKind::ParenthesizedExpression(_) => {}
+          AstKind::ExpressionStatement(_) => {
+            meta.insert(ImportRecordMeta::IS_REQUIRE_UNUSED);
+            break;
+          }
+          AstKind::SequenceExpression(seq_expr) => {
+            // the child node has require and it is potential used
+            // the state may changed according to the child node position
+            // 1. `1, 2, (1, require('a'))` => since the last child contains `require`, and
+            //    in the last position, it is still used if it meant any other astKind
+            // 2. `1, 2, (1, require('a')), 1` => since the last child contains `require`, but it is
+            //    not in the last position, the state should change to unused
+            let last = seq_expr.expressions.last().expect("should have at least one child");
 
-                if !last.span().is_empty() && !expr.span.is_empty() {
-                  is_require_used = last.span().contains_inclusive(expr.span);
-                } else {
-                  is_require_used = true;
-                }
-              }
-              _ => {
-                if is_require_used {
-                  break;
-                }
-              }
+            if !last.span().is_empty() && !expr.span.is_empty() {
+              is_require_used = last.span().contains_inclusive(expr.span);
+            } else {
+              is_require_used = true;
             }
           }
-          meta
-        },
-      );
-      self.result.imports.insert(expr.span, id);
-    }
+          _ => {
+            if is_require_used {
+              break;
+            }
+          }
+        }
+      }
+      meta
+    };
+    let in_side_try_catch_block = self.in_side_try_catch_block();
+    init_meta.set(ImportRecordMeta::IN_TRY_CATCH_BLOCK, in_side_try_catch_block);
+    let id = self.add_import_record(value.as_ref(), ImportKind::Require, span, init_meta);
+    self.result.imports.insert(expr.span, id);
+    true
   }
 }

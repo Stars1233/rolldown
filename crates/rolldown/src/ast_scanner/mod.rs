@@ -1,5 +1,6 @@
 mod cjs_ast_analyzer;
 pub mod dynamic_import;
+mod hmr;
 pub mod impl_visit;
 mod import_assign_analyzer;
 mod new_url;
@@ -8,7 +9,7 @@ pub mod side_effect_detector;
 use arcstr::ArcStr;
 use oxc::ast::ast::MemberExpression;
 use oxc::ast::{ast, AstKind};
-use oxc::semantic::{Reference, ScopeFlags, ScopeId, SymbolTable};
+use oxc::semantic::{Reference, ScopeFlags, ScopeId, ScopeTree, SymbolTable};
 use oxc::span::SPAN;
 use oxc::{
   ast::{
@@ -24,9 +25,9 @@ use oxc::{
 use oxc_index::IndexVec;
 use rolldown_common::dynamic_import_usage::{DynamicImportExportsUsage, DynamicImportUsageInfo};
 use rolldown_common::{
-  AstScopes, EcmaModuleAstUsage, ExportsKind, ImportKind, ImportRecordIdx, ImportRecordMeta,
-  LocalExport, MemberExprRef, ModuleDefFormat, ModuleId, ModuleIdx, NamedImport, RawImportRecord,
-  Specifier, StmtInfo, StmtInfos, SymbolRef, SymbolRefDbForModule, SymbolRefFlags,
+  AstScopes, EcmaModuleAstUsage, ExportsKind, HmrInfo, ImportKind, ImportRecordIdx,
+  ImportRecordMeta, LocalExport, MemberExprRef, ModuleDefFormat, ModuleId, ModuleIdx, NamedImport,
+  RawImportRecord, Specifier, StmtInfo, StmtInfos, SymbolRef, SymbolRefDbForModule, SymbolRefFlags,
   ThisExprReplaceKind,
 };
 use rolldown_ecmascript_utils::{BindingIdentifierExt, BindingPatternExt};
@@ -51,12 +52,15 @@ pub struct ScanResult {
   pub stmt_infos: StmtInfos,
   pub import_records: IndexVec<ImportRecordIdx, RawImportRecord>,
   pub default_export_ref: SymbolRef,
+  /// Represents [Module Namespace Object](https://tc39.es/ecma262/#sec-module-namespace-exotic-objects)
+  pub namespace_object_ref: SymbolRef,
   pub imports: FxHashMap<Span, ImportRecordIdx>,
   pub exports_kind: ExportsKind,
   pub warnings: Vec<BuildDiagnostic>,
   pub errors: Vec<BuildDiagnostic>,
   pub has_eval: bool,
   pub ast_usage: EcmaModuleAstUsage,
+  pub ast_scope: AstScopes,
   pub symbol_ref_db: SymbolRefDbForModule,
   /// https://github.com/evanw/esbuild/blob/d34e79e2a998c21bb71d57b92b0017ca11756912/internal/js_parser/js_parser_lower_class.go#L2277-L2283
   /// used for check if current class decl symbol was referenced in its class scope
@@ -74,6 +78,7 @@ pub struct ScanResult {
   /// `new URL('...', import.meta.url)`
   pub new_url_references: FxHashMap<Span, ImportRecordIdx>,
   pub this_expr_replace_map: FxHashMap<Span, ThisExprReplaceKind>,
+  pub hmr_info: HmrInfo,
 }
 
 pub struct AstScanner<'me, 'ast> {
@@ -81,14 +86,11 @@ pub struct AstScanner<'me, 'ast> {
   source: &'me ArcStr,
   module_type: ModuleDefFormat,
   id: &'me ModuleId,
-  scopes: &'me AstScopes,
   comments: &'me oxc::allocator::Vec<'me, Comment>,
   current_stmt_info: StmtInfo,
   result: ScanResult,
   esm_export_keyword: Option<Span>,
   esm_import_keyword: Option<Span>,
-  /// Represents [Module Namespace Object](https://tc39.es/ecma262/#sec-module-namespace-exotic-objects)
-  pub namespace_object_ref: SymbolRef,
   /// cjs ident span used for emit `commonjs_variable_in_esm` warning
   cjs_exports_ident: Option<Span>,
   cjs_module_ident: Option<Span>,
@@ -114,7 +116,7 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
   #[allow(clippy::too_many_arguments)]
   pub fn new(
     idx: ModuleIdx,
-    scope: &'me AstScopes,
+    scope_tree: ScopeTree,
     symbol_table: SymbolTable,
     repr_name: &'me str,
     module_type: ModuleDefFormat,
@@ -123,7 +125,8 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
     comments: &'me oxc::allocator::Vec<'me, Comment>,
     options: &'me SharedOptions,
   ) -> Self {
-    let mut symbol_ref_db = SymbolRefDbForModule::new(symbol_table, idx, scope.root_scope_id());
+    let ast_scope = AstScopes::new(scope_tree);
+    let mut symbol_ref_db = SymbolRefDbForModule::new(symbol_table, idx, ast_scope.root_scope_id());
     // This is used for converting "export default foo;" => "var default_symbol = foo;"
     let legitimized_repr_name = legitimize_identifier_name(repr_name);
     let default_export_ref = symbol_ref_db
@@ -143,12 +146,14 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       },
       import_records: IndexVec::new(),
       default_export_ref,
+      namespace_object_ref,
       imports: FxHashMap::default(),
       exports_kind: ExportsKind::None,
       warnings: Vec::new(),
       has_eval: false,
       errors: Vec::new(),
       ast_usage: EcmaModuleAstUsage::empty(),
+      ast_scope,
       symbol_ref_db,
       self_referenced_class_decl_symbol_ids: FxHashSet::default(),
       hashbang_range: None,
@@ -156,25 +161,23 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       dynamic_import_rec_exports_usage: FxHashMap::default(),
       new_url_references: FxHashMap::default(),
       this_expr_replace_map: FxHashMap::default(),
+      hmr_info: HmrInfo::default(),
     };
 
     Self {
       idx,
-      scopes: scope,
       current_stmt_info: StmtInfo::default(),
       result,
       esm_export_keyword: None,
       esm_import_keyword: None,
       module_type,
-      namespace_object_ref,
       cjs_module_ident: None,
       cjs_exports_ident: None,
       source,
       id: file_path,
       comments,
       ast_usage: EcmaModuleAstUsage::empty()
-        .union(EcmaModuleAstUsage::AllStaticExportPropertyAccess)
-        .union(EcmaModuleAstUsage::IsCjsReexport),
+        .union(EcmaModuleAstUsage::AllStaticExportPropertyAccess),
       cur_class_decl: None,
       visit_path: vec![],
       ignore_comment: options.experimental.get_ignore_comment(),
@@ -187,13 +190,11 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
   }
 
   /// if current visit path is top level
-  pub fn is_top_level(&self) -> bool {
-    self
-      .scope_stack
-      .iter()
-      .filter_map(|item| *item)
-      .rev()
-      .all(|scope| self.scopes.get_flags(scope).is_top())
+  pub fn is_valid_tla_scope(&self) -> bool {
+    self.scope_stack.iter().rev().filter_map(|item| *item).all(|scope| {
+      let flag = self.result.ast_scope.get_flags(scope);
+      flag.is_block() || flag.is_top()
+    })
   }
 
   pub fn scan(mut self, program: &Program<'ast>) -> BuildResult<ScanResult> {
@@ -255,7 +256,9 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
         .iter()
         .flat_map(|stmt_info| stmt_info.declared_symbols.iter())
         .collect::<FxHashSet<_>>();
-      for (name, symbol_id) in self.scopes.get_bindings(self.scopes.root_scope_id()) {
+      for (name, symbol_id) in
+        self.result.ast_scope.get_bindings(self.result.ast_scope.root_scope_id())
+      {
         let symbol_ref: SymbolRef = (self.idx, *symbol_id).into();
         let scope_id = self.result.symbol_ref_db.get_scope_id(*symbol_id);
         if !scanned_symbols_in_root_scope.remove(&symbol_ref) {
@@ -283,7 +286,7 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
   }
 
   fn get_root_binding(&self, name: &str) -> Option<SymbolId> {
-    self.scopes.get_root_binding(name)
+    self.result.ast_scope.get_root_binding(name)
   }
 
   /// `is_dummy` means if it the import record is created during ast transformation.
@@ -300,11 +303,20 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
     let namespace_ref: SymbolRef =
       self.result.symbol_ref_db.create_facade_root_symbol_ref(&concat_string!(
         "#LOCAL_NAMESPACE_IN_",
-        itoa::Buffer::new().format(self.current_stmt_info.stmt_idx.unwrap_or_default()),
+        itoa::Buffer::new().format(self.current_stmt_info.stmt_idx.unwrap_or_default().raw()),
         "#"
       ));
-    let rec = RawImportRecord::new(Rstr::from(module_request), kind, namespace_ref, span, None)
-      .with_meta(init_meta);
+    let rec = RawImportRecord::new(
+      Rstr::from(module_request),
+      kind,
+      namespace_ref,
+      span,
+      None,
+      // The first index stmt is reserved for the facade statement that constructs Module Namespace
+      // Object
+      self.current_stmt_info.stmt_idx.map(|idx| idx + 1),
+    )
+    .with_meta(init_meta);
 
     let id = self.result.import_records.push(rec);
     self.current_stmt_info.import_records.push(id);
@@ -348,7 +360,8 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
 
     // If there is any write reference to the local variable, it is reassigned.
     let is_reassigned = self
-      .scopes
+      .result
+      .ast_scope
       .get_resolved_references(local, &self.result.symbol_ref_db)
       .any(Reference::is_write);
 
@@ -552,10 +565,10 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
     let ref_id = id_ref.reference_id.get().unwrap_or_else(|| {
       panic!(
         "{id_ref:#?} must have reference id in code```\n{}\n```\n",
-        self.current_stmt_info.debug_label.as_deref().unwrap_or("<None>")
+        self.current_stmt_info.unwrap_debug_label()
       )
     });
-    self.scopes.symbol_id_for(ref_id, &self.result.symbol_ref_db)
+    self.result.ast_scope.symbol_id_for(ref_id, &self.result.symbol_ref_db)
   }
   fn scan_export_default_decl(&mut self, decl: &ExportDefaultDeclaration) {
     use oxc::ast::ast::ExportDefaultDeclarationKind;
@@ -664,7 +677,7 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
   }
 
   fn is_root_symbol(&self, symbol_id: SymbolId) -> bool {
-    self.scopes.root_scope_id() == self.result.symbol_ref_db.get_scope_id(symbol_id)
+    self.result.ast_scope.root_scope_id() == self.result.symbol_ref_db.get_scope_id(symbol_id)
   }
 
   fn try_diagnostic_forbid_const_assign(&mut self, id_ref: &IdentifierReference) -> Option<()> {
@@ -737,10 +750,23 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
     self.is_nested_this_inside_class
       || self.scope_stack.iter().any(|scope| {
         scope.is_some_and(|scope| {
-          let flags = self.scopes.get_flags(scope);
+          let flags = self.result.ast_scope.get_flags(scope);
           flags.contains(ScopeFlags::Function) && !flags.contains(ScopeFlags::Arrow)
         })
       })
+  }
+
+  pub fn in_side_try_catch_block(&self) -> bool {
+    for kind in self.visit_path.iter().rev() {
+      match kind {
+        AstKind::TryStatement(_) => return true,
+        AstKind::ArrowFunctionExpression(_) | AstKind::FunctionBody(_) | AstKind::Function(_) => {
+          return false
+        }
+        _ => {}
+      }
+    }
+    false
   }
 }
 

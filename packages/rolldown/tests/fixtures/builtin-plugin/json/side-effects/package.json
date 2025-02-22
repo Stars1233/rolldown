@@ -1,6 +1,0 @@
-{
-  "name": "@test-fixture/side-effects",
-  "devDependencies": {
-    "rolldown-tests": "workspace:*"
-  }
-}

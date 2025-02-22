@@ -7,9 +7,9 @@ use rolldown_utils::indexmap::{FxIndexMap, FxIndexSet};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-  side_effects::DeterminedSideEffects, types::source_mutation::BoxedSourceMutation, AstScopes,
-  EcmaAstIdx, ExportsKind, ImportRecordIdx, LocalExport, ModuleDefFormat, ModuleId, NamedImport,
-  ResolvedImportRecord, SourceMutation, StmtInfoIdx, StmtInfos, SymbolRef,
+  side_effects::DeterminedSideEffects, types::source_mutation::BoxedSourceMutation, AstScopeIdx,
+  EcmaAstIdx, ExportsKind, HmrInfo, ImportRecordIdx, LocalExport, ModuleDefFormat, ModuleId,
+  NamedImport, ResolvedImportRecord, SourceMutation, StmtInfoIdx, StmtInfos, SymbolRef,
 };
 
 bitflags! {
@@ -54,39 +54,6 @@ impl EcmaViewMeta {
   pub fn has_star_export(&self) -> bool {
     self.contains(Self::HAS_STAR_EXPORT)
   }
-
-  #[inline]
-  pub fn set_eval(&mut self, value: bool) {
-    if value {
-      self.insert(Self::EVAL);
-    } else {
-      self.remove(Self::EVAL);
-    }
-  }
-  #[inline]
-  pub fn set_included(&mut self, value: bool) {
-    if value {
-      self.insert(Self::INCLUDED);
-    } else {
-      self.remove(Self::INCLUDED);
-    }
-  }
-  #[inline]
-  pub fn set_has_lazy_export(&mut self, value: bool) {
-    if value {
-      self.insert(Self::HAS_LAZY_EXPORT);
-    } else {
-      self.remove(Self::HAS_LAZY_EXPORT);
-    }
-  }
-  #[inline]
-  pub fn set_has_star_exports(&mut self, value: bool) {
-    if value {
-      self.insert(Self::HAS_STAR_EXPORT);
-    } else {
-      self.remove(Self::HAS_STAR_EXPORT);
-    }
-  }
 }
 
 #[derive(Debug)]
@@ -105,7 +72,7 @@ pub struct EcmaView {
   /// and `CallExpression`(only when the callee is `require`).
   pub imports: FxHashMap<Span, ImportRecordIdx>,
   pub exports_kind: ExportsKind,
-  pub scope: AstScopes,
+  pub ast_scope_idx: Option<AstScopeIdx>,
   pub default_export_ref: SymbolRef,
   pub sourcemap_chain: Vec<rolldown_sourcemap::SourceMap>,
   // the ids of all modules that statically import this module
@@ -134,6 +101,8 @@ pub struct EcmaView {
   /// - Represents the `import_xxx` in `const import_xxx = __toESM(require_xxx(), 1);`
   /// - Only exist when this module is a cjs module and get imported by static `import` statement.
   pub esm_namespace_in_cjs_node_mode: Option<EsmNamespaceInCjs>,
+
+  pub hmr_info: HmrInfo,
 }
 
 bitflags! {
@@ -145,6 +114,8 @@ bitflags! {
         const AllStaticExportPropertyAccess = 1 << 3;
         /// module.exports = require('mod');
         const IsCjsReexport = 1 << 4;
+        const TopLevelAwait = 1 << 5;
+        const HmrSelfAccept = 1 << 6;
         const ModuleOrExports = Self::ModuleRef.bits() | Self::ExportsRef.bits();
     }
 }

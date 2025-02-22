@@ -12,7 +12,7 @@ use crate::{
 use crate::{EcmaAstIdx, EcmaView, IndexModules, Interop, Module, ModuleType};
 use std::ops::{Deref, DerefMut};
 
-use either::Either;
+use itertools::Either;
 use oxc::codegen::LegalComment;
 use oxc_index::IndexVec;
 use rolldown_ecmascript::{EcmaAst, EcmaCompiler, PrintOptions};
@@ -281,8 +281,8 @@ impl NormalModule {
       stmt_idx: None,
       declared_symbols: vec![esm_namespace_ref_derived_from_module_exports],
       referenced_symbols: vec![wrap_ref.into(), runtime_module.resolve_symbol("__toESM").into()],
+      #[cfg(debug_assertions)]
       debug_label: Some("esm_namespace_ref_derived_from_module_exports".to_string()),
-      side_effect: true,
       ..Default::default()
     });
 
@@ -302,7 +302,7 @@ impl NormalModule {
     runtime_module: &RuntimeModuleBrief,
     wrap_ref: SymbolRef,
   ) {
-    if self.esm_namespace_in_cjs.is_some() {
+    if self.esm_namespace_in_cjs_node_mode.is_some() {
       return;
     }
     let esm_namespace_ref_derived_from_module_exports = symbol_db.create_facade_root_symbol_ref(
@@ -314,7 +314,8 @@ impl NormalModule {
       stmt_idx: None,
       declared_symbols: vec![esm_namespace_ref_derived_from_module_exports],
       referenced_symbols: vec![wrap_ref.into(), runtime_module.resolve_symbol("__toESM").into()],
-      debug_label: Some("esm_namespace_ref_derived_from_module_exports".to_string()),
+      #[cfg(debug_assertions)]
+      debug_label: Some("esm_namespace_ref_derived_from_module_exports node".to_string()),
       ..Default::default()
     });
 

@@ -35,6 +35,7 @@ const sharedSidebar = [
     items: [
       { text: 'Why Bundlers', link: '/guide/in-depth/why-bundlers.md' },
       { text: 'Module Types', link: '/guide/in-depth/module-types.md' },
+      { text: 'Top Level Await', link: '/guide/in-depth/tla-in-rolldown.md' },
       // { text: 'Use Strict', link: '/guide/in-depth/use-strict.md' },
     ],
   },
@@ -63,6 +64,14 @@ export default defineConfig({
   ],
 
   themeConfig: {
+    search: {
+      provider: 'algolia',
+      options: {
+        appId: process.env.ALGOLIA_APP_ID || '',
+        apiKey: process.env.ALGOLIA_API_KEY || '',
+        indexName: 'rolldown',
+      },
+    },
     logo: { src: '/lightning-down.svg', width: 24, height: 24 },
 
     // https://vitepress.dev/reference/default-theme-config
