@@ -1,74 +1,45 @@
-use std::vec;
+use std::sync::Arc;
 
 use oxc::{
+  allocator::CloneIn,
   ast::{
-    ast::{
-      ExportAllDeclaration, ExportNamedDeclaration, ImportDeclaration, ImportOrExportKind,
-      Statement,
-    },
+    ast::{Argument, ExportAllDeclaration, ExportNamedDeclaration, Expression, ImportDeclaration},
+    visit::walk_mut::walk_expression,
     AstBuilder, VisitMut, NONE,
   },
   span::SPAN,
 };
-use rolldown_utils::ecmascript::legitimize_identifier_name;
+use rolldown_utils::concat_string;
+use rustc_hash::FxHashSet;
 
-use crate::{utils::is_remote_module, ModuleFederationPluginOption};
+use crate::{
+  utils::{detect_remote_module_type, get_remote_module_prefix, RemoteModuleType},
+  ModuleFederationPluginOption,
+};
 
-const INIT_MODULE: &str = "__mf__init__module__";
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct RemoteModule {
+  pub id: Arc<str>,
+  pub r#type: RemoteModuleType,
+}
 
 pub struct InitModuleVisitor<'ast, 'a> {
+  #[allow(dead_code)]
   pub ast_builder: AstBuilder<'ast>,
   pub options: &'a ModuleFederationPluginOption,
-  pub statements: Vec<Statement<'ast>>,
+  pub init_remote_modules: &'a mut FxHashSet<RemoteModule>,
 }
 
 impl InitModuleVisitor<'_, '_> {
+  #[allow(clippy::too_many_lines)]
   pub fn detect_static_module_decl(&mut self, request: &str) {
-    if is_remote_module(request, self.options) {
-      // import * as ns from 'app/App'
-      // await ns.__mf__init__module__()
-      let name = legitimize_identifier_name(request);
-      let import_module = Statement::from(self.ast_builder.module_declaration_import_declaration(
-        SPAN,
-        Some(self.ast_builder.vec1(
-          self.ast_builder.import_declaration_specifier_import_namespace_specifier(
-            SPAN,
-            self.ast_builder.binding_identifier(SPAN, name.as_ref()),
-          ),
-        )),
-        self.ast_builder.string_literal(SPAN, self.ast_builder.atom(request), None),
-        None,
-        NONE,
-        ImportOrExportKind::Value,
-      ));
-
-      let init_statement = self.ast_builder.statement_expression(
-        SPAN,
-        self.ast_builder.expression_await(
-          SPAN,
-          self.ast_builder.expression_call(
-            SPAN,
-            self
-              .ast_builder
-              .member_expression_static(
-                SPAN,
-                self.ast_builder.expression_identifier_reference(SPAN, name),
-                self.ast_builder.identifier_name(SPAN, INIT_MODULE),
-                false,
-              )
-              .into(),
-            NONE,
-            self.ast_builder.vec(),
-            false,
-          ),
-        ),
-      );
-      self.statements.extend(vec![import_module, init_statement]);
+    if let Some(remote_type) = detect_remote_module_type(request, self.options) {
+      self.init_remote_modules.insert(RemoteModule { id: request.into(), r#type: remote_type });
     }
   }
 }
 
-// TODO require/ import()
+// TODO require
 impl<'ast> VisitMut<'ast> for InitModuleVisitor<'ast, '_> {
   fn visit_import_declaration(&mut self, decl: &mut ImportDeclaration<'ast>) {
     self.detect_static_module_decl(&decl.source.value);
@@ -82,5 +53,64 @@ impl<'ast> VisitMut<'ast> for InitModuleVisitor<'ast, '_> {
     if let Some(source) = &decl.source {
       self.detect_static_module_decl(&source.value);
     }
+  }
+
+  fn visit_expression(&mut self, expr: &mut Expression<'ast>) {
+    // import('module') => import('init_module_module').then(() => import('module'))
+    if let Expression::ImportExpression(import_expr) = expr {
+      if let Expression::StringLiteral(lit) = &import_expr.source {
+        if let Some(remote_type) = detect_remote_module_type(&lit.value, self.options) {
+          let id = concat_string!(get_remote_module_prefix(remote_type), lit.value.as_str());
+          *expr = self.ast_builder.expression_call(
+            SPAN,
+            self
+              .ast_builder
+              .member_expression_static(
+                SPAN,
+                self.ast_builder.expression_import(
+                  SPAN,
+                  self.ast_builder.expression_string_literal(
+                    SPAN,
+                    self.ast_builder.atom(&id),
+                    None,
+                  ),
+                  self.ast_builder.vec(),
+                  None,
+                ),
+                self.ast_builder.identifier_name(SPAN, self.ast_builder.atom("then")),
+                false,
+              )
+              .into(),
+            NONE,
+            self.ast_builder.vec1(Argument::ArrowFunctionExpression(
+              self.ast_builder.alloc_arrow_function_expression(
+                SPAN,
+                true,
+                false,
+                NONE,
+                self.ast_builder.formal_parameters(
+                  SPAN,
+                  oxc::ast::ast::FormalParameterKind::Signature,
+                  self.ast_builder.vec(),
+                  NONE,
+                ),
+                NONE,
+                self.ast_builder.function_body(
+                  SPAN,
+                  self.ast_builder.vec(),
+                  self.ast_builder.vec1(self.ast_builder.statement_expression(
+                    SPAN,
+                    Expression::ImportExpression(import_expr.clone_in(self.ast_builder.allocator)),
+                  )),
+                ),
+              ),
+            )),
+            false,
+          );
+          return;
+        }
+      }
+    }
+    walk_expression(self, expr);
   }
 }

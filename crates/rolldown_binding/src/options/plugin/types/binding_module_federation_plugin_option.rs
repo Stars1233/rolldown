@@ -46,12 +46,32 @@ impl From<BindingShared> for rolldown_plugin_module_federation::Shared {
 }
 
 #[napi(object)]
+pub struct BindingMFManifest {
+  pub file_path: Option<String>,
+  pub disable_assets_analyze: Option<bool>,
+  pub file_name: Option<String>,
+}
+
+impl From<BindingMFManifest> for rolldown_plugin_module_federation::Manifest {
+  fn from(value: BindingMFManifest) -> Self {
+    Self {
+      file_path: value.file_path,
+      disable_assets_analyze: value.disable_assets_analyze,
+      file_name: value.file_name,
+    }
+  }
+}
+
+#[napi(object)]
 pub struct BindingModuleFederationPluginOption {
   pub name: String,
   pub filename: Option<String>,
   pub exposes: Option<HashMap<String, String, FxBuildHasher>>,
   pub remotes: Option<Vec<BindingRemote>>,
   pub shared: Option<HashMap<String, BindingShared, FxBuildHasher>>,
+  pub runtime_plugins: Option<Vec<String>>,
+  pub manifest: Option<BindingMFManifest>,
+  pub get_public_path: Option<String>,
 }
 
 impl From<BindingModuleFederationPluginOption>
@@ -64,6 +84,9 @@ impl From<BindingModuleFederationPluginOption>
       exposes: value.exposes,
       remotes: value.remotes.map(|r| r.into_iter().map(Into::into).collect()),
       shared: value.shared.map(|r| r.into_iter().map(|(k, v)| (k, v.into())).collect()),
+      runtime_plugins: value.runtime_plugins,
+      manifest: value.manifest.map(Into::into),
+      get_public_path: value.get_public_path,
     }
   }
 }

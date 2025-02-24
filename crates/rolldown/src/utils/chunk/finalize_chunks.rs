@@ -32,11 +32,14 @@ pub fn finalize_assets(
   let asset_idx_by_placeholder = preliminary_assets
     .iter_enumerated()
     .filter_map(|(asset_idx, asset)| {
-      asset
-        .preliminary_filename
-        .hash_placeholder()
-        .map(|hash_placeholder| (hash_placeholder.into(), asset_idx))
+      asset.preliminary_filename.hash_placeholder().map(|placeholders| {
+        placeholders
+          .iter()
+          .map(|hash_placeholder| (hash_placeholder.into(), asset_idx))
+          .collect::<Vec<_>>()
+      })
     })
+    .flatten()
     .collect::<FxHashMap<ArcStr, _>>();
 
   let index_direct_dependencies: IndexVec<AssetIdx, Vec<AssetIdx>> = preliminary_assets
@@ -102,11 +105,13 @@ pub fn finalize_assets(
     .iter_enumerated()
     .filter_map(|(idx, (hash, _))| {
       let asset = &preliminary_assets[idx];
-      asset
-        .preliminary_filename
-        .hash_placeholder()
-        .map(|hash_placeholder| (hash_placeholder.into(), &hash[..hash_placeholder.len()]))
+      asset.preliminary_filename.hash_placeholder().map(|placeholders| {
+        placeholders
+          .iter()
+          .map(|placeholder| (placeholder.clone().into(), &hash[..placeholder.len()]))
+      })
     })
+    .flatten()
     .collect::<FxHashMap<_, _>>();
 
   let mut assets: IndexAssets = preliminary_assets
@@ -119,7 +124,6 @@ pub fn finalize_assets(
         asset.preliminary_filename.as_str(),
         &final_hashes_by_placeholder,
       )
-      .into_owned()
       .into();
 
       if let InstantiationKind::Ecma(ecma_meta) = &mut asset.kind {
@@ -138,12 +142,12 @@ pub fn finalize_assets(
         StrOrBytes::Bytes(_content) => {}
       }
 
-      asset.finalize(filename.to_string())
+      asset.finalize(filename)
     })
     .collect::<Vec<_>>()
     .into();
 
-  let index_asset_to_filename: IndexVec<AssetIdx, String> =
+  let index_asset_to_filename: IndexVec<AssetIdx, ArcStr> =
     assets.iter().map(|asset| asset.filename.clone()).collect::<Vec<_>>().into();
 
   assets.par_iter_mut().for_each(|asset| {
@@ -153,14 +157,14 @@ pub fn finalize_assets(
         .cross_chunk_imports
         .iter()
         .flat_map(|importee_idx| &index_chunk_to_assets[*importee_idx])
-        .map(|importee_asset_idx| index_asset_to_filename[*importee_asset_idx].clone().into())
+        .map(|importee_asset_idx| index_asset_to_filename[*importee_asset_idx].clone())
         .collect();
 
       ecma_meta.rendered_chunk.dynamic_imports = chunk
         .cross_chunk_dynamic_imports
         .iter()
         .flat_map(|importee_idx| &index_chunk_to_assets[*importee_idx])
-        .map(|importee_asset_idx| index_asset_to_filename[*importee_asset_idx].clone().into())
+        .map(|importee_asset_idx| index_asset_to_filename[*importee_asset_idx].clone())
         .collect();
     }
   });

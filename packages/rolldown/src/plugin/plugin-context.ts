@@ -1,4 +1,4 @@
-import type { BindingPluginContext } from '../binding'
+import type { BindingPluginContext, ParserOptions } from '../binding'
 import type {
   CustomPluginOptions,
   ModuleOptions,
@@ -7,7 +7,7 @@ import type {
 } from './index'
 import { MinimalPluginContext } from '../plugin/minimal-plugin-context'
 import { AssetSource, bindingAssetSource } from '../utils/asset-source'
-import { unimplemented, unsupported } from '../utils/misc'
+import { unimplemented } from '../utils/misc'
 import { ModuleInfo } from '../types/module-info'
 import { PluginContextData } from './plugin-context-data'
 import { SYMBOL_FOR_RESOLVE_CALLER_THAT_SKIP_SELF } from '../constants/plugin-context'
@@ -16,6 +16,9 @@ import { bindingifySideEffects } from '../utils/transform-side-effects'
 import type { LogHandler, LogLevelOption } from '../types/misc'
 import { LOG_LEVEL_WARN } from '../log/logging'
 import { logCycleLoading } from '../log/logs'
+import { OutputOptions } from '../options/output-options'
+import { parseAst } from '../parse-ast-index'
+import { Program } from '@oxc-project/types'
 
 export interface EmittedAsset {
   type: 'asset'
@@ -45,8 +48,12 @@ export interface PrivatePluginContextResolveOptions
   [SYMBOL_FOR_RESOLVE_CALLER_THAT_SKIP_SELF]?: symbol
 }
 
+export type GetModuleInfo = (moduleId: string) => ModuleInfo | null
+
 export class PluginContext extends MinimalPluginContext {
+  getModuleInfo: GetModuleInfo
   constructor(
+    private outputOptions: OutputOptions,
     private context: BindingPluginContext,
     plugin: Plugin,
     private data: PluginContextData,
@@ -55,6 +62,7 @@ export class PluginContext extends MinimalPluginContext {
     private currentLoadingModule?: string,
   ) {
     super(onLog, logLevel, plugin.name!)
+    this.getModuleInfo = (id: string) => this.data.getModuleInfo(id, context)
   }
 
   public async load(
@@ -74,9 +82,10 @@ export class PluginContext extends MinimalPluginContext {
     if (moduleInfo && moduleInfo.code !== null /* module already parsed */) {
       return moduleInfo
     }
-    const rawOptions = {
+    const rawOptions: ModuleOptions = {
       meta: options.meta || {},
       moduleSideEffects: options.moduleSideEffects || null,
+      invalidate: false,
     }
     this.data.updateModuleOption(id, rawOptions)
 
@@ -142,19 +151,35 @@ export class PluginContext extends MinimalPluginContext {
     if (file.type === 'chunk') {
       return this.context.emitChunk(file)
     }
-    return this.context.emitFile({
-      ...file,
-      originalFileName: file.originalFileName || undefined,
-      source: bindingAssetSource(file.source),
-    })
+    const fnSanitizedFileName =
+      file.fileName || typeof this.outputOptions.sanitizeFileName !== 'function'
+        ? undefined
+        : this.outputOptions.sanitizeFileName!(file.name || 'asset')
+    const filename = file.fileName ? undefined : this.getAssetFileNames(file)
+    return this.context.emitFile(
+      {
+        ...file,
+        originalFileName: file.originalFileName || undefined,
+        source: bindingAssetSource(file.source),
+      },
+      filename,
+      fnSanitizedFileName,
+    )
+  }
+
+  private getAssetFileNames(file: EmittedAsset): string | undefined {
+    if (typeof this.outputOptions.assetFileNames === 'function') {
+      return this.outputOptions.assetFileNames({
+        names: file.name ? [file.name] : [],
+        originalFileNames: file.originalFileName ? [file.originalFileName] : [],
+        source: file.source,
+        type: 'asset',
+      })
+    }
   }
 
   public getFileName(referenceId: string): string {
     return this.context.getFileName(referenceId)
-  }
-
-  public getModuleInfo(id: string): ModuleInfo | null {
-    return this.data.getModuleInfo(id, this.context)
   }
 
   public getModuleIds(): IterableIterator<string> {
@@ -165,10 +190,10 @@ export class PluginContext extends MinimalPluginContext {
     this.context.addWatchFile(id)
   }
 
-  /**
-   * @deprecated This rollup API won't be supported by rolldown. Using this API will cause runtime error.
-   */
-  public parse(_input: string, _options?: any): any {
-    unsupported('`PluginContext#parse` is not supported by rolldown.')
+  public parse(
+    input: string,
+    options?: ParserOptions | undefined | null,
+  ): Program {
+    return parseAst(input, options)
   }
 }

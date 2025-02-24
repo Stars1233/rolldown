@@ -8,6 +8,7 @@ import {
   type BindingViteResolvePluginConfig,
   BindingModuleFederationPluginOption,
   BindingRemote,
+  BindingMfManifest,
 } from '../binding'
 import { makeBuiltinPluginCallable } from './utils'
 
@@ -16,10 +17,7 @@ export class BuiltinPlugin {
     public name: BindingBuiltinPluginName,
     // NOTE: has `_` to avoid conflict with `options` hook
     public _options?: unknown,
-  ) {
-    this.name = name
-    this._options = _options
-  }
+  ) {}
 }
 
 export function modulePreloadPolyfillPlugin(
@@ -85,6 +83,7 @@ export type ModuleFederationPluginOption = Omit<
   'remotes'
 > & {
   remotes?: Record<string, string | BindingRemote>
+  manifest?: boolean | BindingMfManifest
 }
 
 export function moduleFederationPlugin(
@@ -98,12 +97,18 @@ export function moduleFederationPlugin(
         if (typeof remote === 'string') {
           const [entryGlobalName] = remote.split('@')
           const entry = remote.replace(entryGlobalName + '@', '')
-          return { entry, name }
+          return { entry, name, entryGlobalName }
         }
         return {
           ...remote,
           name: remote.name ?? name,
         }
       }),
+    manifest:
+      config.manifest === false
+        ? undefined
+        : config.manifest === true
+          ? {}
+          : config.manifest,
   })
 }

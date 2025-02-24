@@ -21,7 +21,7 @@ use rolldown_utils::{
 use super::LinkStage;
 
 impl LinkStage<'_> {
-  pub fn generate_lazy_export(&mut self) {
+  pub(super) fn generate_lazy_export(&mut self) {
     let module_idx_to_exports_kind = append_only_vec::AppendOnlyVec::new();
     self.module_table.modules.par_iter_mut().for_each(|module| {
       let Module::Normal(module) = module else {
@@ -160,7 +160,7 @@ fn json_object_expr_to_esm(
 
           let value = std::mem::replace(
             &mut property.value,
-            snippet.builder.expression_identifier_reference(SPAN, legitimized_ident.as_str()),
+            snippet.builder.expression_identifier(SPAN, legitimized_ident.as_str()),
           );
           if key == "__proto__" && !matches!(target, ESTarget::Es5) {
             property.computed = true;
@@ -234,8 +234,9 @@ fn json_object_expr_to_esm(
   // update module stmts info
   // clear stmt info, since we need to split `ObjectExpression` into multiple decl, the original stmt info is invalid.
   // preserve the first one, which is `NamespaceRef`
-  module.stmt_infos.drain(1.into()..);
-  let mut all_declared_symbols = vec![];
+  let stmt_info = module.stmt_infos.drain(1.into()..);
+  let mut all_declared_symbols =
+    stmt_info.flat_map(|info| info.referenced_symbols).collect::<Vec<_>>();
   for (i, (local, exported, _)) in declaration_binding_names.iter().enumerate() {
     let symbol_id = ast_scope.get_root_binding(local.as_str()).expect("should have binding");
     let symbol_ref = (module_idx, symbol_id).into();
@@ -264,7 +265,8 @@ fn json_object_expr_to_esm(
       .with_declared_symbols(vec![namespace_object_ref])
       .with_referenced_symbols(all_declared_symbols),
   );
-  module.ecma_view.scope = ast_scope;
+  let ast_scope_idx = module.ecma_view.ast_scope_idx.unwrap();
+  link_staged.ast_scope_table[ast_scope_idx] = ast_scope;
   link_staged.symbols.store_local_db(module_idx, symbol_ref_db);
   true
 }

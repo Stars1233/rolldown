@@ -2,10 +2,10 @@ use arcstr::ArcStr;
 use itertools::Itertools;
 use rolldown_common::{ExportsKind, Specifier};
 use rolldown_sourcemap::SourceJoiner;
-use rolldown_utils::{concat_string, ecmascript::is_validate_identifier_name};
+use rolldown_utils::{concat_string, ecmascript::to_module_import_export_name};
 
 use crate::{
-  ecmascript::ecma_generator::RenderedModuleSources,
+  ecmascript::ecma_generator::{RenderedModuleSource, RenderedModuleSources},
   types::generator::GenerateContext,
   utils::chunk::render_chunk_exports::{render_chunk_exports, render_wrapped_entry_chunk},
 };
@@ -51,13 +51,15 @@ pub fn render_esm<'code>(
   }
 
   // chunk content
-  module_sources.iter().for_each(|(_, _, module_render_output)| {
-    if let Some(emitted_sources) = module_render_output {
-      for source in emitted_sources.as_ref() {
-        source_joiner.append_source(source);
+  module_sources.iter().for_each(
+    |RenderedModuleSource { sources: module_render_output, .. }| {
+      if let Some(emitted_sources) = module_render_output {
+        for source in emitted_sources.as_ref() {
+          source_joiner.append_source(source);
+        }
       }
-    }
-  });
+    },
+  );
 
   if let Some(source) = render_wrapped_entry_chunk(ctx, None) {
     source_joiner.append_source(source);
@@ -110,7 +112,6 @@ fn render_esm_chunk_imports(ctx: &GenerateContext<'_>) -> String {
     s.push_str(&create_import_declaration(
       specifiers,
       &default_alias,
-      // TODO: filename relative to importee
       &ctx.chunk.import_path_for(importee_chunk).into(),
     ));
   });
@@ -147,11 +148,7 @@ fn render_esm_chunk_imports(ctx: &GenerateContext<'_>) -> String {
                 default_alias.push(alias.as_str().into());
                 return None;
               }
-              let imported = if is_validate_identifier_name(imported) {
-                imported.clone()
-              } else {
-                format!("'{imported}'").into()
-              };
+              let imported = to_module_import_export_name(imported);
               Some(concat_string!(imported, " as ", alias))
             }
           }

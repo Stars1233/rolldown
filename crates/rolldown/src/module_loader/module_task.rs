@@ -15,7 +15,7 @@ use std::sync::Arc;
 use sugar_path::SugarPath;
 
 use rolldown_common::{
-  EcmaRelated, ImportKind, ImportRecordIdx, ModuleDefFormat, ModuleId, ModuleIdx, ModuleInfo,
+  ImportKind, ImportRecordIdx, ImportRecordMeta, ModuleDefFormat, ModuleId, ModuleIdx, ModuleInfo,
   ModuleLoaderMsg, ModuleType, NormalModule, NormalModuleTaskResult, RawImportRecord, ResolvedId,
   StrOrBytes, RUNTIME_MODULE_ID,
 };
@@ -88,7 +88,7 @@ impl ModuleTask {
 
   #[expect(clippy::too_many_lines)]
   async fn run_inner(&mut self) -> BuildResult<()> {
-    let id = ModuleId::new(ArcStr::clone(&self.resolved_id.id));
+    let id = ModuleId::new(&self.resolved_id.id);
 
     // Add watch files for watcher recover if build errors occurred.
     self.ctx.plugin_driver.watch_files.insert(self.resolved_id.id.clone());
@@ -113,32 +113,32 @@ impl ModuleTask {
     let (mut source, module_type) =
       self.load_source_phase(&mut sourcemap_chain, &mut hook_side_effects).await?;
 
-    let asset_view = if matches!(module_type, ModuleType::Asset) {
-      let asset_source = source.into_bytes();
-      source = StrOrBytes::Str(String::new());
-      Some(create_asset_view(asset_source.into()))
-    } else {
-      None
-    };
-
     let stable_id = id.stabilize(&self.ctx.options.cwd);
     let mut raw_import_records = IndexVec::default();
 
-    let css_view = if matches!(module_type, ModuleType::Css) {
-      let css_source: ArcStr = source.try_into_string()?.into();
-      // FIXME: This makes creating `EcmaView` rely on creating `CssView` first, while they should be done in parallel.
-      source = StrOrBytes::Str(String::new());
-      let create_ret = create_css_view(&stable_id, &css_source);
-      raw_import_records = create_ret.1;
-      Some(create_ret.0)
-    } else {
-      None
+    let (asset_view, css_view) = match module_type {
+      ModuleType::Asset => {
+        let asset_source = source.into_bytes();
+        let asset_view = create_asset_view(asset_source.into());
+        source = StrOrBytes::Str(String::new());
+        (Some(asset_view), None)
+      }
+      ModuleType::Css => {
+        let css_source: ArcStr = source.try_into_string()?.into();
+        // FIXME: This makes creating `EcmaView` rely on creating `CssView` first, while they should be done in parallel.
+        let (css_view, css_raw_import_records) = create_css_view(&stable_id, &css_source);
+        raw_import_records = css_raw_import_records;
+        source = StrOrBytes::Str(String::new());
+        (None, Some(css_view))
+      }
+      _ => (None, None),
     };
 
     let mut warnings = vec![];
 
     let ret = create_ecma_view(
       &mut CreateModuleContext {
+        stable_id: &stable_id,
         module_index: self.module_idx,
         plugin_driver: &self.ctx.plugin_driver,
         resolved_id: &self.resolved_id,
@@ -153,14 +153,12 @@ impl ModuleTask {
     .await?;
 
     let CreateEcmaViewReturn {
-      view: mut ecma_view,
-      ast,
-      symbols,
+      mut ecma_view,
+      ecma_related,
       raw_import_records: ecma_raw_import_records,
-      dynamic_import_rec_exports_usage,
     } = ret;
 
-    if !matches!(module_type, ModuleType::Css) {
+    if css_view.is_none() {
       raw_import_records = ecma_raw_import_records;
     }
 
@@ -173,7 +171,7 @@ impl ModuleTask {
       )
       .await?;
 
-    if !matches!(module_type, ModuleType::Css) {
+    if css_view.is_none() {
       for (record, info) in raw_import_records.iter().zip(&resolved_deps) {
         match record.kind {
           ImportKind::Import | ImportKind::Require | ImportKind::NewUrl => {
@@ -183,16 +181,16 @@ impl ModuleTask {
             ecma_view.dynamically_imported_ids.insert(ArcStr::clone(&info.id).into());
           }
           // for a none css module, we should not have `at-import` or `url-import`
-          ImportKind::AtImport | ImportKind::UrlImport => unreachable!(),
+          ImportKind::AtImport | ImportKind::UrlImport | ImportKind::HotAccept => unreachable!(),
         }
       }
     }
 
-    let repr_name = self.resolved_id.id.as_path().representative_file_name().into_owned();
-    let repr_name = legitimize_identifier_name(&repr_name);
+    let repr_name = self.resolved_id.id.as_path().representative_file_name();
+    let repr_name = legitimize_identifier_name(&repr_name).into_owned();
 
     let module = NormalModule {
-      repr_name: repr_name.into_owned(),
+      repr_name,
       stable_id,
       id,
       debug_id: self.resolved_id.debug_id(&self.ctx.options.cwd),
@@ -207,25 +205,19 @@ impl ModuleTask {
 
     let module_info = Arc::new(module.to_module_info(Some(&raw_import_records)));
     self.ctx.plugin_driver.set_module_info(&module.id, Arc::clone(&module_info));
-    self.ctx.plugin_driver.module_parsed(Arc::clone(&module_info)).await?;
+    self.ctx.plugin_driver.module_parsed(Arc::clone(&module_info), &module).await?;
     self.ctx.plugin_driver.mark_context_load_modules_loaded(&module.id).await?;
 
-    if self
-      .ctx
-      .tx
-      .send(ModuleLoaderMsg::NormalModuleDone(NormalModuleTaskResult {
-        resolved_deps,
-        module_idx: self.module_idx,
-        warnings,
-        ecma_related: Some(EcmaRelated { ast, symbols, dynamic_import_rec_exports_usage }),
-        module: module.into(),
-        raw_import_records,
-      }))
-      .await
-      .is_err()
-    {
-      // The main thread is dead, nothing we can do to handle these send failures.
-    }
+    let result = ModuleLoaderMsg::NormalModuleDone(NormalModuleTaskResult {
+      module: module.into(),
+      ecma_related: Some(ecma_related),
+      resolved_deps,
+      raw_import_records,
+      warnings,
+    });
+
+    // If the main thread is dead, nothing we can do to handle these send failures.
+    let _ = self.ctx.tx.send(result).await;
 
     Ok(())
   }
@@ -366,6 +358,11 @@ impl ModuleTask {
       let importer = &self.resolved_id.id;
       let kind = item.kind;
       async move {
+        // TODO: We should early return when `async closure is stable`
+        // Can't use `module_request.is_empty()` to check, see https://github.com/rolldown/rolldown/actions/runs/12980744296/job/36198187669?pr=3428
+        if item.meta.contains(ImportRecordMeta::IS_DUMMY) {
+          return Ok((item.module_request.clone(), idx, Ok(ResolvedId::make_dummy())));
+        }
         Self::resolve_id(&bundle_options, &resolver, &plugin_driver, importer, &specifier, kind)
           .await
           .map(|id| (specifier, idx, id))
@@ -389,23 +386,13 @@ impl ModuleTask {
           let dep = &dependencies[idx];
           match &e {
             ResolveError::NotFound(..) => {
-              // https://github.com/rollup/rollup/blob/49b57c2b30d55178a7316f23cc9ccc457e1a2ee7/src/ModuleLoader.ts#L643-L646
-              if ecmascript::is_path_like_specifier(&specifier) {
-                // Unlike rollup, we also emit errors for absolute path
-                build_errors.push(BuildDiagnostic::resolve_error(
-                  source.clone(),
-                  self.resolved_id.id.clone(),
-                  if dep.is_unspanned() || is_css_module {
-                    DiagnosableArcstr::String(concat_string!("'", specifier.as_str(), "'").into())
-                  } else {
-                    DiagnosableArcstr::Span(dep.state.span)
-                  },
-                  "Module not found.".into(),
-                  Some("UNRESOLVED_IMPORT"),
-                ));
-              } else {
-                warnings.push(
-                  BuildDiagnostic::resolve_error(
+              // NOTE: IN_TRY_CATCH_BLOCK meta if it is a `require` import
+              // record
+              if !dep.meta.contains(ImportRecordMeta::IN_TRY_CATCH_BLOCK) {
+                // https://github.com/rollup/rollup/blob/49b57c2b30d55178a7316f23cc9ccc457e1a2ee7/src/ModuleLoader.ts#L643-L646
+                if ecmascript::is_path_like_specifier(&specifier) {
+                  // Unlike rollup, we also emit errors for absolute path
+                  build_errors.push(BuildDiagnostic::resolve_error(
                     source.clone(),
                     self.resolved_id.id.clone(),
                     if dep.is_unspanned() || is_css_module {
@@ -413,11 +400,27 @@ impl ModuleTask {
                     } else {
                       DiagnosableArcstr::Span(dep.state.span)
                     },
-                    "Module not found, treating it as an external dependency".into(),
+                    "Module not found.".into(),
                     Some("UNRESOLVED_IMPORT"),
-                  )
-                  .with_severity_warning(),
-                );
+                  ));
+                } else {
+                  warnings.push(
+                    BuildDiagnostic::resolve_error(
+                      source.clone(),
+                      self.resolved_id.id.clone(),
+                      if dep.is_unspanned() || is_css_module {
+                        DiagnosableArcstr::String(
+                          concat_string!("'", specifier.as_str(), "'").into(),
+                        )
+                      } else {
+                        DiagnosableArcstr::Span(dep.state.span)
+                      },
+                      "Module not found, treating it as an external dependency".into(),
+                      Some("UNRESOLVED_IMPORT"),
+                    )
+                    .with_severity_warning(),
+                  );
+                }
               }
               ret.push(ResolvedId {
                 id: specifier.to_string().into(),

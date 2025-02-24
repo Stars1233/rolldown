@@ -74,8 +74,13 @@ impl BindingPluginContext {
   }
 
   #[napi]
-  pub fn emit_file(&self, file: BindingEmittedAsset) -> String {
-    self.inner.emit_file(file.into()).to_string()
+  pub fn emit_file(
+    &self,
+    file: BindingEmittedAsset,
+    asset_filename: Option<String>,
+    fn_sanitized_file_name: Option<String>,
+  ) -> String {
+    self.inner.emit_file(file.into(), asset_filename, fn_sanitized_file_name).to_string()
   }
 
   #[napi]
@@ -86,8 +91,8 @@ impl BindingPluginContext {
   }
 
   #[napi]
-  pub fn get_file_name(&self, reference_id: String) -> String {
-    self.inner.get_file_name(reference_id.as_str()).to_string()
+  pub fn get_file_name(&self, reference_id: String) -> anyhow::Result<String> {
+    self.inner.get_file_name(reference_id.as_str()).map(|id| id.to_string())
   }
 
   #[napi]

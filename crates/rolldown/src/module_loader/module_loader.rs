@@ -1,8 +1,9 @@
 use super::module_task::{ModuleTask, ModuleTaskOwner};
 use super::runtime_module_task::RuntimeModuleTask;
 use super::task_context::TaskContextMeta;
+use crate::ecmascript::ecma_module_view_factory::normalize_side_effects;
 use crate::module_loader::task_context::TaskContext;
-use crate::type_alias::IndexEcmaAst;
+use crate::type_alias::{IndexAstScope, IndexEcmaAst};
 use crate::utils::load_entry_module::load_entry_module;
 use arcstr::ArcStr;
 use oxc::semantic::{ScopeId, SymbolTable};
@@ -12,9 +13,10 @@ use rolldown_common::dynamic_import_usage::DynamicImportExportsUsage;
 use rolldown_common::side_effects::{DeterminedSideEffects, HookSideEffects};
 use rolldown_common::{
   Cache, EcmaRelated, EntryPoint, EntryPointKind, ExternalModule, ImportKind, ImportRecordIdx,
-  ImporterRecord, Module, ModuleId, ModuleIdx, ModuleInfo, ModuleLoaderMsg, ModuleSideEffects,
-  ModuleTable, ModuleType, NormalModuleTaskResult, ResolvedId, RuntimeModuleBrief,
-  RuntimeModuleTaskResult, SymbolRefDb, SymbolRefDbForModule, TreeshakeOptions, RUNTIME_MODULE_ID,
+  ImportRecordMeta, ImporterRecord, Module, ModuleId, ModuleIdx, ModuleInfo, ModuleLoaderMsg,
+  ModuleSideEffects, ModuleTable, ModuleType, NormalModuleTaskResult, ResolvedId,
+  RuntimeModuleBrief, RuntimeModuleTaskResult, StmtInfoIdx, SymbolRefDb, SymbolRefDbForModule,
+  TreeshakeOptions, DUMMY_MODULE_IDX, RUNTIME_MODULE_ID,
 };
 use rolldown_error::{BuildDiagnostic, BuildResult};
 use rolldown_fs::OsFileSystem;
@@ -24,6 +26,7 @@ use rolldown_utils::indexmap::FxIndexSet;
 use rolldown_utils::rayon::{IntoParallelIterator, ParallelIterator};
 use rolldown_utils::rustc_hash::FxHashSetExt;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use crate::{SharedOptions, SharedResolver};
@@ -32,6 +35,7 @@ pub struct IntermediateNormalModules {
   pub modules: IndexVec<ModuleIdx, Option<Module>>,
   pub importers: IndexVec<ModuleIdx, Vec<ImporterRecord>>,
   pub index_ecma_ast: IndexEcmaAst,
+  pub index_ast_scope: IndexAstScope,
 }
 
 impl IntermediateNormalModules {
@@ -40,6 +44,7 @@ impl IntermediateNormalModules {
       modules: IndexVec::new(),
       importers: IndexVec::new(),
       index_ecma_ast: IndexVec::default(),
+      index_ast_scope: IndexVec::default(),
     }
   }
 
@@ -66,6 +71,7 @@ pub struct ModuleLoaderOutput {
   // Stored all modules
   pub module_table: ModuleTable,
   pub index_ecma_ast: IndexEcmaAst,
+  pub index_ast_scope: IndexAstScope,
   pub symbol_ref_db: SymbolRefDb,
   // Entries that user defined + dynamic import entries
   pub entry_points: Vec<EntryPoint>,
@@ -138,8 +144,8 @@ impl ModuleLoader {
     assert_module_type: Option<ModuleType>,
   ) -> ModuleIdx {
     match self.visited.entry(resolved_id.id.clone()) {
-      std::collections::hash_map::Entry::Occupied(visited) => *visited.get(),
-      std::collections::hash_map::Entry::Vacant(not_visited) => {
+      Entry::Occupied(visited) => *visited.get(),
+      Entry::Vacant(not_visited) => {
         let idx = self.intermediate_normal_modules.alloc_ecma_module_idx();
 
         if resolved_id.is_external {
@@ -225,6 +231,7 @@ impl ModuleLoader {
     let entries_count = user_defined_entries.len() + /* runtime */ 1;
     self.intermediate_normal_modules.modules.reserve(entries_count);
     self.intermediate_normal_modules.index_ecma_ast.reserve(entries_count);
+    self.intermediate_normal_modules.index_ast_scope.reserve(entries_count);
 
     // Store the already consider as entry module
     let mut user_defined_entry_ids = FxHashSet::with_capacity(user_defined_entries.len());
@@ -236,13 +243,16 @@ impl ModuleLoader {
         id: self.try_spawn_new_task(info, None, true, None),
         kind: EntryPointKind::UserDefined,
         file_name: None,
+        reference_id: None,
+        related_stmt_infos: vec![],
       })
       .inspect(|e| {
         user_defined_entry_ids.insert(e.id);
       })
       .collect::<Vec<_>>();
 
-    let mut dynamic_import_entry_ids = FxHashSet::default();
+    let mut dynamic_import_entry_ids: FxHashMap<ModuleIdx, Vec<(ModuleIdx, StmtInfoIdx)>> =
+      FxHashMap::default();
     let mut dynamic_import_exports_usage_pairs = vec![];
     let mut extra_entry_points = vec![];
 
@@ -254,12 +264,11 @@ impl ModuleLoader {
       match msg {
         ModuleLoaderMsg::NormalModuleDone(task_result) => {
           let NormalModuleTaskResult {
-            module_idx,
-            resolved_deps,
             mut module,
+            mut ecma_related,
+            resolved_deps,
             raw_import_records,
             warnings,
-            mut ecma_related,
           } = task_result;
           all_warnings.extend(warnings);
           let mut dynamic_import_rec_exports_usage = ecma_related
@@ -271,6 +280,9 @@ impl ModuleLoader {
               .into_iter_enumerated()
               .zip(resolved_deps)
               .map(|((rec_idx, raw_rec), info)| {
+                if raw_rec.meta.contains(ImportRecordMeta::IS_DUMMY) {
+                  return raw_rec.into_resolved(DUMMY_MODULE_IDX);
+                }
                 let normal_module = module.as_normal().unwrap();
                 let owner = ModuleTaskOwner::new(
                   normal_module.source.clone(),
@@ -296,18 +308,37 @@ impl ModuleLoader {
                 if matches!(raw_rec.kind, ImportKind::DynamicImport)
                   && !user_defined_entry_ids.contains(&id)
                 {
-                  dynamic_import_entry_ids.insert(id);
+                  match dynamic_import_entry_ids.entry(id) {
+                    Entry::Vacant(vac) => match raw_rec.related_stmt_info_idx {
+                      Some(stmt_info_idx) => {
+                        vac.insert(vec![(module.idx(), stmt_info_idx)]);
+                      }
+                      None => {
+                        vac.insert(vec![]);
+                      }
+                    },
+                    Entry::Occupied(mut occ) => {
+                      if let Some(stmt_info_idx) = raw_rec.related_stmt_info_idx {
+                        occ.get_mut().push((module.idx(), stmt_info_idx));
+                      }
+                    }
+                  }
                 }
                 raw_rec.into_resolved(id)
               })
               .collect::<IndexVec<ImportRecordIdx, _>>();
 
           module.set_import_records(import_records);
-          if let Some(EcmaRelated { ast, symbols, .. }) = ecma_related {
-            let ast_idx = self.intermediate_normal_modules.index_ecma_ast.push((ast, module.idx()));
+
+          let module_idx = module.idx();
+          if let Some(EcmaRelated { ast, symbols, ast_scope, .. }) = ecma_related {
+            let ast_idx = self.intermediate_normal_modules.index_ecma_ast.push((ast, module_idx));
+            let ast_scope_idx = self.intermediate_normal_modules.index_ast_scope.push(ast_scope);
             module.set_ecma_ast_idx(ast_idx);
+            module.set_ast_scope_idx(ast_scope_idx);
             self.symbol_ref_db.store_local_db(module_idx, symbols);
           }
+
           self.intermediate_normal_modules.modules[module_idx] = Some(module);
           self.remaining -= 1;
         }
@@ -319,6 +350,7 @@ impl ModuleLoader {
             ast,
             raw_import_records,
             resolved_deps,
+            ast_scope,
           } = task_result;
           let import_records: IndexVec<ImportRecordIdx, rolldown_common::ResolvedImportRecord> =
             raw_import_records
@@ -334,13 +366,29 @@ impl ModuleLoader {
                 if matches!(raw_rec.kind, ImportKind::DynamicImport)
                   && !user_defined_entry_ids.contains(&id)
                 {
-                  dynamic_import_entry_ids.insert(id);
+                  match dynamic_import_entry_ids.entry(id) {
+                    Entry::Vacant(vac) => match raw_rec.related_stmt_info_idx {
+                      Some(stmt_info_idx) => {
+                        vac.insert(vec![(module.idx, stmt_info_idx)]);
+                      }
+                      None => {
+                        vac.insert(vec![]);
+                      }
+                    },
+                    Entry::Occupied(mut occ) => {
+                      if let Some(stmt_info_idx) = raw_rec.related_stmt_info_idx {
+                        occ.get_mut().push((module.idx, stmt_info_idx));
+                      }
+                    }
+                  }
                 }
                 raw_rec.into_resolved(id)
               })
               .collect::<IndexVec<ImportRecordIdx, _>>();
           let ast_idx = self.intermediate_normal_modules.index_ecma_ast.push((ast, module.idx));
+          let ast_scope_idx = self.intermediate_normal_modules.index_ast_scope.push(ast_scope);
           module.ecma_ast_idx = Some(ast_idx);
+          module.ast_scope_idx = Some(ast_scope_idx);
           module.import_records = import_records;
           self.intermediate_normal_modules.modules[self.runtime_id] = Some(module.into());
 
@@ -351,7 +399,8 @@ impl ModuleLoader {
         ModuleLoaderMsg::FetchModule(resolve_id) => {
           self.try_spawn_new_task(resolve_id, None, false, None);
         }
-        ModuleLoaderMsg::AddEntryModule(data) => {
+        ModuleLoaderMsg::AddEntryModule(msg) => {
+          let data = msg.chunk;
           let result = load_entry_module(
             &self.shared_context.resolver,
             &self.shared_context.plugin_driver,
@@ -371,6 +420,8 @@ impl ModuleLoader {
             id: self.try_spawn_new_task(resolved_id, None, true, None),
             kind: EntryPointKind::UserDefined,
             file_name: data.file_name.clone(),
+            reference_id: Some(msg.reference_id),
+            related_stmt_infos: vec![],
           });
         }
         ModuleLoaderMsg::BuildErrors(e) => {
@@ -384,14 +435,58 @@ impl ModuleLoader {
       return Err(errors.into());
     }
 
+    // defer sync user modified data in js side
+    if let Some(ref func) = self.options.defer_sync_scan_data {
+      let data = func.exec().await?;
+      for d in data {
+        let source_id = ArcStr::from(d.id);
+        let Some(idx) = self.visited.get(&source_id) else {
+          continue;
+        };
+        let Some(normal) = self.intermediate_normal_modules.modules[*idx]
+          .as_mut()
+          .and_then(|item| item.as_normal_mut())
+        else {
+          continue;
+        };
+        // TODO: Document this and recommend user to return `moduleSideEffects` in hook return
+        // value rather than mutate the `ModuleInfo`
+        normal.ecma_view.side_effects = match d.side_effects {
+          Some(HookSideEffects::False) => DeterminedSideEffects::UserDefined(false),
+          Some(HookSideEffects::NoTreeshake) => DeterminedSideEffects::NoTreeshake,
+          _ => {
+            // for Some(HookSideEffects::True) and None, we need to re resolve module source_id,
+            // get package_json and re analyze the side effects
+            let resolved_id: ResolvedId = self
+              .shared_context
+              .resolver
+              // other params except `source_id` is not important, since we need `package_json`
+              // from `resolved_id` to re analyze the side effects
+              .resolve(None, source_id.as_str(), ImportKind::Import, normal.is_user_defined_entry)
+              .expect("Should have resolved id")
+              .into();
+            normalize_side_effects(
+              d.side_effects,
+              &self.options,
+              &normal.module_type,
+              &resolved_id,
+              &normal.stable_id,
+              &normal.stmt_infos,
+            )
+            .await?
+          }
+        };
+      }
+    }
+
     let dynamic_import_exports_usage_map = dynamic_import_exports_usage_pairs.into_iter().fold(
       FxHashMap::default(),
       |mut acc, (idx, usage)| {
         match acc.entry(idx) {
-          std::collections::hash_map::Entry::Vacant(vac) => {
+          Entry::Vacant(vac) => {
             vac.insert(usage);
           }
-          std::collections::hash_map::Entry::Occupied(mut occ) => {
+          Entry::Occupied(mut occ) => {
             occ.get_mut().merge(usage);
           }
         };
@@ -403,13 +498,11 @@ impl ModuleLoader {
     let modules: IndexVec<ModuleIdx, Module> = self
       .intermediate_normal_modules
       .modules
-      .into_iter()
-      .enumerate()
-      .map(|(id, module)| {
+      .into_iter_enumerated()
+      .map(|(idx, module)| {
         let mut module = module.expect("Module tasks did't complete as expected");
 
         if let Some(module) = module.as_normal_mut() {
-          let idx = ModuleIdx::from(id);
           // Note: (Compat to rollup)
           // The `dynamic_importers/importers` should be added after `module_parsed` hook.
           let importers = std::mem::take(&mut self.intermediate_normal_modules.importers[idx]);
@@ -442,13 +535,17 @@ impl ModuleLoader {
     // if `inline_dynamic_imports` is set to be true, here we should not put dynamic imports to entries
     if !self.options.inline_dynamic_imports {
       let mut dynamic_import_entry_ids = dynamic_import_entry_ids.into_iter().collect::<Vec<_>>();
-      dynamic_import_entry_ids.sort_unstable_by_key(|id| modules[*id].stable_id());
+      dynamic_import_entry_ids.sort_unstable_by_key(|(id, _)| modules[*id].stable_id());
 
-      entry_points.extend(dynamic_import_entry_ids.into_iter().map(|id| EntryPoint {
-        name: None,
-        id,
-        kind: EntryPointKind::DynamicImport,
-        file_name: None,
+      entry_points.extend(dynamic_import_entry_ids.into_iter().map(|(id, related_stmt_infos)| {
+        EntryPoint {
+          name: None,
+          id,
+          kind: EntryPointKind::DynamicImport,
+          file_name: None,
+          reference_id: None,
+          related_stmt_infos,
+        }
       }));
     }
 
@@ -459,6 +556,7 @@ impl ModuleLoader {
       module_table: ModuleTable { modules },
       symbol_ref_db: self.symbol_ref_db,
       index_ecma_ast: self.intermediate_normal_modules.index_ecma_ast,
+      index_ast_scope: self.intermediate_normal_modules.index_ast_scope,
       entry_points,
       runtime: runtime_brief.expect("Failed to find runtime module. This should not happen"),
       warnings: all_warnings,

@@ -23,8 +23,25 @@ use super::format::{
   app::render_app, cjs::render_cjs, esm::render_esm, iife::render_iife, umd::render_umd,
 };
 
-pub type RenderedModuleSources =
-  Vec<(ModuleIdx, ModuleId, Option<Arc<[Box<dyn Source + Send + Sync>]>>)>;
+pub type RenderedModuleSources = Vec<RenderedModuleSource>;
+
+pub struct RenderedModuleSource {
+  pub module_idx: ModuleIdx,
+  pub module_id: ModuleId,
+  pub exec_order: u32,
+  pub sources: Option<Arc<[Box<dyn Source + Send + Sync>]>>,
+}
+
+impl RenderedModuleSource {
+  pub fn new(
+    module_idx: ModuleIdx,
+    module_id: ModuleId,
+    exec_order: u32,
+    sources: Option<Arc<[Box<dyn Source + Send + Sync>]>>,
+  ) -> Self {
+    Self { module_idx, module_id, exec_order, sources }
+  }
+}
 
 pub struct EcmaGenerator;
 
@@ -33,7 +50,7 @@ impl Generator for EcmaGenerator {
   async fn instantiate_chunk(ctx: &mut GenerateContext<'_>) -> Result<BuildResult<GenerateOutput>> {
     let mut rendered_modules = FxHashMap::default();
     let module_id_to_codegen_ret = std::mem::take(&mut ctx.module_id_to_codegen_ret);
-    let rendered_module_sources = ctx
+    let rendered_module_sources: RenderedModuleSources = ctx
       .chunk
       .modules
       .par_iter()
@@ -45,12 +62,33 @@ impl Generator for EcmaGenerator {
           .map(|m| (m, codegen_ret.expect("should have codegen_ret")))
       })
       .map(|(m, codegen_ret)| {
-        (m.idx, m.id.clone(), render_ecma_module(m, ctx.options, codegen_ret))
+        RenderedModuleSource::new(
+          m.idx,
+          m.id.clone(),
+          m.exec_order,
+          render_ecma_module(m, ctx.options, codegen_ret),
+        )
       })
       .collect::<Vec<_>>();
 
-    rendered_module_sources.iter().for_each(|(_, module_id, sources)| {
-      rendered_modules.insert(module_id.clone(), RenderedModule::new(sources.clone()));
+    rendered_module_sources.iter().for_each(|rendered_module_source| {
+      let RenderedModuleSource { module_idx, module_id, exec_order, sources } =
+        rendered_module_source;
+      let rendered_exports = ctx.link_output.metas[*module_idx]
+        .resolved_exports
+        .iter()
+        .filter_map(|(key, export)| {
+          if ctx.link_output.used_symbol_refs.contains(&export.symbol_ref) {
+            Some(key.clone())
+          } else {
+            None
+          }
+        })
+        .collect::<Vec<_>>();
+      rendered_modules.insert(
+        module_id.clone(),
+        RenderedModule::new(sources.clone(), rendered_exports, *exec_order),
+      );
     });
 
     let rendered_chunk = generate_rendered_chunk(
@@ -60,13 +98,10 @@ impl Generator for EcmaGenerator {
       ctx.chunk_graph,
     );
     let hashbang = match ctx.chunk.user_defined_entry_module(&ctx.link_output.module_table) {
-      Some(normal_module) => {
-        let source = &normal_module.source;
-        normal_module
-          .ecma_view
-          .hashbang_range
-          .map(|range| &source.as_str()[range.start as usize..range.end as usize])
-      }
+      Some(normal_module) => normal_module
+        .ecma_view
+        .hashbang_range
+        .map(|range| &normal_module.source[range.start as usize..range.end as usize]),
       None => None,
     };
 

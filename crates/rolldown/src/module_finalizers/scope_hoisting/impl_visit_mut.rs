@@ -90,6 +90,7 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
         program.body.push(self.snippet.var_decl_stmt(canonical_name, self.snippet.void_zero()));
       }
     });
+    program.body.extend(self.generate_runtime_module_register_for_hmr());
     walk_mut::walk_program(self, program);
 
     if needs_wrapper {
@@ -190,6 +191,7 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
             stmts_inside_closure,
             self.ctx.options.profiler_names,
             &self.ctx.module.stable_id,
+            self.ctx.linking_info.is_tla_or_contains_tla_dependency,
           ));
         }
         WrapKind::None => {}
@@ -295,7 +297,7 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
         if let Some(kind) = self.ctx.module.ecma_view.this_expr_replace_map.get(&this_expr.span) {
           match kind {
             ThisExprReplaceKind::Exports => {
-              *expr = self.snippet.builder.expression_identifier_reference(SPAN, "exports");
+              *expr = self.snippet.builder.expression_identifier(SPAN, "exports");
             }
             ThisExprReplaceKind::Undefined => {
               *expr = self.snippet.void_zero();
@@ -368,9 +370,7 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
         let importee_id = rec.resolved_module;
         match &self.ctx.modules[importee_id] {
           Module::Normal(_importee) => {
-            let importer_chunk_id = self.ctx.chunk_graph.module_to_chunk[self.ctx.module.idx]
-              .expect("Normal module should belong to a chunk");
-            let importer_chunk = &self.ctx.chunk_graph.chunk_table[importer_chunk_id];
+            let importer_chunk = &self.ctx.chunk_graph.chunk_table[self.ctx.chunk_id];
 
             let importee_chunk_id = self.ctx.chunk_graph.entry_module_to_entry_chunk[&importee_id];
             let importee_chunk = &self.ctx.chunk_graph.chunk_table[importee_chunk_id];

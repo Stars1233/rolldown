@@ -1,5 +1,4 @@
 use std::{
-  fmt::Debug,
   future::Future,
   ops::Deref,
   path::PathBuf,
@@ -9,6 +8,7 @@ use std::{
 
 use anyhow::Context;
 use arcstr::ArcStr;
+use derive_more::Debug;
 use rolldown_common::{
   side_effects::HookSideEffects, ModuleDefFormat, ModuleInfo, ModuleLoaderMsg, ResolvedId,
   SharedFileEmitter, SharedNormalizedBundlerOptions,
@@ -63,19 +63,14 @@ type LoadCallbackFn = dyn Fn() -> Pin<Box<(dyn Future<Output = anyhow::Result<()
   + Sync
   + 'static;
 
-pub struct LoadCallback(Box<LoadCallbackFn>);
+#[derive(Debug)]
+pub struct LoadCallback(#[debug("LoadCallback fn")] Box<LoadCallbackFn>);
 
 impl Deref for LoadCallback {
   type Target = LoadCallbackFn;
 
   fn deref(&self) -> &Self::Target {
     &*self.0
-  }
-}
-
-impl Debug for LoadCallback {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "LoadCallback fn")
   }
 }
 
@@ -173,15 +168,35 @@ impl PluginContextImpl {
     self.file_emitter.emit_chunk(Arc::new(chunk)).await
   }
 
-  pub fn emit_file(&self, file: rolldown_common::EmittedAsset) -> ArcStr {
-    self.file_emitter.emit_file(file)
+  pub fn emit_file(
+    &self,
+    file: rolldown_common::EmittedAsset,
+    fn_asset_filename: Option<String>,
+    fn_sanitized_file_name: Option<String>,
+  ) -> ArcStr {
+    let sanitized_file_name = match file.file_name {
+      Some(_) => None,
+      None => {
+        Some(self.options.sanitize_filename.value(file.name_for_sanitize(), fn_sanitized_file_name))
+      }
+    };
+    let asset_filename_template = match file.file_name {
+      Some(_) => None,
+      None => Some(self.options.asset_filenames.value(fn_asset_filename).into()),
+    };
+    self.file_emitter.emit_file(file, asset_filename_template, sanitized_file_name)
   }
 
-  pub fn try_get_file_name(&self, reference_id: &str) -> Result<ArcStr, String> {
-    self.file_emitter.try_get_file_name(reference_id)
+  pub async fn emit_file_async(
+    &self,
+    file: rolldown_common::EmittedAsset,
+  ) -> anyhow::Result<ArcStr> {
+    let asset_filename = self.options.asset_filename_with_file(&file).await?;
+    let sanitized_file_name = self.options.sanitize_file_name_with_file(&file).await?;
+    Ok(self.file_emitter.emit_file(file, asset_filename.map(Into::into), sanitized_file_name))
   }
 
-  pub fn get_file_name(&self, reference_id: &str) -> ArcStr {
+  pub fn get_file_name(&self, reference_id: &str) -> anyhow::Result<ArcStr> {
     self.file_emitter.get_file_name(reference_id)
   }
 

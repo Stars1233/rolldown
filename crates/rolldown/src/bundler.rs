@@ -1,6 +1,7 @@
 use super::stages::{link_stage::LinkStage, scan_stage::ScanStageOutput};
 use crate::{
   bundler_builder::BundlerBuilder,
+  hmr::hmr_manager::HmrManager,
   stages::{generate_stage::GenerateStage, scan_stage::ScanStage},
   types::bundle_output::BundleOutput,
   BundlerOptions, SharedOptions, SharedResolver,
@@ -27,6 +28,7 @@ pub struct Bundler {
   pub(crate) _log_guard: Option<FlushGuard>,
   #[allow(unused)]
   pub(crate) cache: Arc<Cache>,
+  pub(crate) hmr_manager: Option<HmrManager>,
 }
 
 impl Bundler {
@@ -121,7 +123,10 @@ impl Bundler {
         .map_err(|err| anyhow::anyhow!("Failed to write file in {:?}", dest).context(err))?;
     }
 
-    self.plugin_driver.write_bundle(&mut output.assets, &self.options).await?;
+    self
+      .plugin_driver
+      .write_bundle(&mut output.assets, &self.options, &mut output.warnings)
+      .await?;
 
     output.warnings.append(&mut self.warnings);
 
@@ -160,9 +165,12 @@ impl Bundler {
     let mut output = bundle_output?;
 
     // Add additional files from build plugins.
-    self.file_emitter.add_additional_files(&mut output.assets);
+    self.file_emitter.add_additional_files(&mut output.assets, &mut output.warnings);
 
-    self.plugin_driver.generate_bundle(&mut output.assets, is_write, &self.options).await?;
+    self
+      .plugin_driver
+      .generate_bundle(&mut output.assets, is_write, &self.options, &mut output.warnings)
+      .await?;
 
     output.watch_files = self.plugin_driver.watch_files.iter().map(|f| f.clone()).collect();
 
@@ -171,6 +179,14 @@ impl Bundler {
 
   pub fn options(&self) -> &NormalizedBundlerOptions {
     &self.options
+  }
+
+  pub fn generate_hmr_patch(&mut self, changed_files: Vec<String>) -> String {
+    self
+      .hmr_manager
+      .as_ref()
+      .expect("HMR manager is not initialized")
+      .generate_hmr_patch(changed_files)
   }
 }
 

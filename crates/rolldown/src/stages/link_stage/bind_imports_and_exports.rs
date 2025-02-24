@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::hash_map::Entry};
 
 use arcstr::ArcStr;
 use indexmap::IndexSet;
@@ -124,7 +124,7 @@ impl LinkStage<'_> {
   ///
   /// Unlike import from normal modules, the imported variable deosn't have a place that declared the variable. So we consider `import { a } from 'external'` in `foo.js` as the declaration statement of `a`.
   #[expect(clippy::too_many_lines)]
-  pub fn bind_imports_and_exports(&mut self) {
+  pub(super) fn bind_imports_and_exports(&mut self) {
     self.sorted_modules.iter().copied().for_each(|importer_idx| {
       let Some(importer) = self.module_table.modules[importer_idx].as_normal() else {
         return;
@@ -135,6 +135,9 @@ impl LinkStage<'_> {
         .import_records
         .iter()
         .filter_map(|import_rec| {
+          if import_rec.is_dummy() {
+            return None;
+          }
           let importee = &self.module_table.modules[import_rec.resolved_module];
           let importee_meta = &self.metas[importee.idx()];
           match (import_rec.kind, importee_meta.wrap_kind) {
@@ -279,18 +282,31 @@ impl LinkStage<'_> {
   /// exports.something = 1
   /// ```
   fn update_cjs_module_meta(&mut self) {
+    enum CacheStatus {
+      Seen,
+      Value(bool),
+    }
     /// caller should guarantee that the idx of module belongs to a normal module
     fn recursive_update_cjs_module_interop_default_removable(
       module_tables: &IndexModules,
       module_idx: ModuleIdx,
-      cache: &mut FxHashMap<ModuleIdx, bool>,
+      cache: &mut FxHashMap<ModuleIdx, CacheStatus>,
     ) -> bool {
-      if let Some(&result) = cache.get(&module_idx) {
-        return result;
-      }
+      match cache.entry(module_idx) {
+        Entry::Occupied(mut occ) => {
+          match occ.get_mut() {
+            // Find a cycle
+            CacheStatus::Seen => return false,
+            CacheStatus::Value(v) => return *v,
+          }
+        }
+        Entry::Vacant(vac) => {
+          vac.insert(CacheStatus::Seen);
+        }
+      };
       let module = module_tables[module_idx].as_normal().unwrap();
       let v = if module.ast_usage.contains(EcmaModuleAstUsage::IsCjsReexport) {
-        module.import_records.iter().all(|item| {
+        module.import_records.iter().filter(|item| !item.is_dummy()).all(|item| {
           let Some(importee) = module_tables[item.resolved_module].as_normal() else {
             return false;
           };
@@ -307,7 +323,7 @@ impl LinkStage<'_> {
       } else {
         module.ast_usage.contains(EcmaModuleAstUsage::AllStaticExportPropertyAccess)
       };
-      cache.insert(module_idx, v);
+      cache.insert(module_idx, CacheStatus::Value(v));
       v
     }
 
@@ -554,7 +570,14 @@ impl BindImportsAndExportsContext<'_> {
 
       let rec = &module.import_records[named_import.record_id];
       let is_external = matches!(self.index_modules[rec.resolved_module], Module::External(_));
-      if is_esm && is_external {
+
+      if is_esm
+        && is_external
+        && self.metas[module_id]
+          .resolved_exports
+          .iter()
+          .all(|(_, resolved_export)| resolved_export.symbol_ref != *imported_as_ref)
+      {
         if let Specifier::Literal(ref name) = named_import.imported {
           self
             .external_import_binding_merger

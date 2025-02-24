@@ -1,9 +1,11 @@
 use oxc::semantic::ScopeId;
 use oxc::syntax::keyword::{GLOBAL_OBJECTS, RESERVED_KEYWORDS};
 use rolldown_common::{
-  IndexModules, ModuleIdx, NormalModule, OutputFormat, SymbolNameRefToken, SymbolRef, SymbolRefDb,
+  AstScopes, IndexModules, ModuleIdx, NormalModule, OutputFormat, SymbolNameRefToken, SymbolRef,
+  SymbolRefDb,
 };
 use rolldown_rstr::{Rstr, ToRstr};
+use rolldown_utils::rustc_hash::FxHashMapExt;
 use rolldown_utils::{
   concat_string,
   rayon::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
@@ -11,6 +13,8 @@ use rolldown_utils::{
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
+
+use crate::type_alias::IndexAstScope;
 
 #[derive(Debug)]
 pub struct Renamer<'name> {
@@ -38,7 +42,7 @@ pub struct Renamer<'name> {
 }
 
 impl<'name> Renamer<'name> {
-  pub fn new(symbols: &'name SymbolRefDb, _modules_len: usize, format: OutputFormat) -> Self {
+  pub fn new(symbols: &'name SymbolRefDb, format: OutputFormat) -> Self {
     // Port from https://github.com/rollup/rollup/blob/master/src/Chunk.ts#L1377-L1394.
     let mut manual_reserved = match format {
       OutputFormat::Esm | OutputFormat::App => vec![],
@@ -94,8 +98,7 @@ impl<'name> Renamer<'name> {
   }
 
   pub fn create_conflictless_name(&mut self, hint: &str) -> String {
-    let hint = Rstr::new(hint);
-    let mut conflictless_name = hint.clone();
+    let mut conflictless_name = Rstr::new(hint);
     loop {
       match self.used_canonical_names.entry(conflictless_name.clone()) {
         Entry::Occupied(mut occ) => {
@@ -115,8 +118,8 @@ impl<'name> Renamer<'name> {
 
   #[allow(dead_code)]
   pub fn add_symbol_name_ref_token(&mut self, token: &SymbolNameRefToken) {
-    let hint = Rstr::new(token.value());
-    let mut conflictless_name = hint.clone();
+    let hint = token.value();
+    let mut conflictless_name = Rstr::new(hint);
     loop {
       match self.used_canonical_names.entry(conflictless_name.clone()) {
         Entry::Occupied(mut occ) => {
@@ -131,23 +134,29 @@ impl<'name> Renamer<'name> {
         }
       }
     }
-    self.canonical_token_to_name.insert(token.clone(), conflictless_name.clone());
+    self.canonical_token_to_name.insert(token.clone(), conflictless_name);
   }
 
   // non-top-level symbols won't be linked cross-module. So the canonical `SymbolRef` for them are themselves.
   #[tracing::instrument(level = "trace", skip_all)]
-  pub fn rename_non_root_symbol(&mut self, modules_in_chunk: &[ModuleIdx], modules: &IndexModules) {
+  pub fn rename_non_root_symbol(
+    &mut self,
+    modules_in_chunk: &[ModuleIdx],
+    modules: &IndexModules,
+    ast_scope_table: &IndexAstScope,
+  ) {
     #[tracing::instrument(level = "trace", skip_all)]
     fn rename_symbols_of_nested_scopes<'name>(
       module: &'name NormalModule,
       scope_id: ScopeId,
       stack: &mut Vec<Cow<FxHashMap<Rstr, u32>>>,
       canonical_names: &mut FxHashMap<SymbolRef, Rstr>,
+      ast_scope: &'name AstScopes,
     ) {
-      let mut bindings = module.scope.get_bindings(scope_id).iter().collect::<Vec<_>>();
+      let mut bindings = ast_scope.get_bindings(scope_id).iter().collect::<Vec<_>>();
+      let mut used_canonical_names_for_this_scope = FxHashMap::with_capacity(bindings.len());
+
       bindings.sort_unstable_by_key(|(_, symbol_id)| *symbol_id);
-      let mut used_canonical_names_for_this_scope = FxHashMap::default();
-      used_canonical_names_for_this_scope.shrink_to(bindings.len());
       bindings.iter().for_each(|(binding_name, &symbol_id)| {
         let binding_ref: SymbolRef = (module.idx, symbol_id).into();
 
@@ -174,13 +183,12 @@ impl<'name> Renamer<'name> {
             // The symbol is already renamed
           }
         }
-        used_canonical_names_for_this_scope.insert(binding_name.to_rstr(), 0);
       });
 
       stack.push(Cow::Owned(used_canonical_names_for_this_scope));
-      let child_scopes = module.scope.get_child_ids(scope_id);
+      let child_scopes = ast_scope.get_child_ids(scope_id);
       child_scopes.iter().for_each(|scope_id| {
-        rename_symbols_of_nested_scopes(module, *scope_id, stack, canonical_names);
+        rename_symbols_of_nested_scopes(module, *scope_id, stack, canonical_names, ast_scope);
       });
       stack.pop();
     }
@@ -188,7 +196,9 @@ impl<'name> Renamer<'name> {
     let copied_scope_iter =
       modules_in_chunk.par_iter().copied().filter_map(|id| modules[id].as_normal()).flat_map(
         |module| {
-          let child_scopes: &[ScopeId] = module.scope.get_child_ids(module.scope.root_scope_id());
+          let ast_scope_idx = module.ast_scope_idx.expect("ast_scope_idx should be set");
+          let ast_scope = &ast_scope_table[ast_scope_idx];
+          let child_scopes: &[ScopeId] = ast_scope.get_child_ids(ast_scope.root_scope_id());
 
           child_scopes.into_par_iter().map(|child_scope_id| {
             let mut stack = vec![Cow::Borrowed(&self.used_canonical_names)];
@@ -198,6 +208,7 @@ impl<'name> Renamer<'name> {
               *child_scope_id,
               &mut stack,
               &mut canonical_names,
+              ast_scope,
             );
             canonical_names
           })

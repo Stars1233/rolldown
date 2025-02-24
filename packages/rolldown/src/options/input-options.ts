@@ -2,7 +2,7 @@ import type { RolldownPluginOption } from '../plugin'
 import type {
   LogLevel,
   LogLevelOption,
-  LogLevelWithError,
+  LogOrStringHandler,
   RollupLog,
   RollupLogWithString,
 } from '../log/logging'
@@ -47,6 +47,7 @@ export interface JsxOptions {
 
 export interface WatchOptions {
   skipWrite?: boolean
+  buildDelay?: number
   notify?: {
     pollInterval?: number
     compareContents?: boolean
@@ -102,10 +103,7 @@ export interface InputOptions {
   onLog?: (
     level: LogLevel,
     log: RollupLog,
-    defaultHandler: (
-      level: LogLevelWithError,
-      log: RollupLogWithString,
-    ) => void,
+    defaultHandler: LogOrStringHandler,
   ) => void
   onwarn?: (
     warning: RollupLog,
@@ -120,6 +118,7 @@ export interface InputOptions {
     disableLiveBindings?: boolean
     viteMode?: boolean
     resolveNewUrlToAsset?: boolean
+    hmr?: boolean
   }
   /**
    * Replace global variables or [property accessors](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Property_accessors) with the provided values.

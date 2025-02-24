@@ -15,14 +15,7 @@ var __esm = (fn, res) => function() {
 };
 
 //#endregion
-//#region size-41.js
-var init_size_41 = __esm({ "size-41.js"() {
-	console.log(1e6);
-	console.log(1e6);
-} });
-
-//#endregion
-export { __esm, init_size_41 };
+export { __esm };
 ```
 ## 40max-size2.js
 
@@ -41,13 +34,20 @@ var init_size_20 = __esm({ "size-20.js"() {
 } });
 
 //#endregion
-export { init_size_15, init_size_20 };
+//#region size-41.js
+var init_size_41 = __esm({ "size-41.js"() {
+	console.log(1e6);
+	console.log(1e6);
+} });
+
+//#endregion
+export { init_size_15, init_size_20, init_size_41 };
 ```
 ## main.js
 
 ```js
-import { __esm, init_size_41 } from "./40max-size.js";
-import { init_size_15, init_size_20 } from "./40max-size2.js";
+import { __esm } from "./40max-size.js";
+import { init_size_15, init_size_20, init_size_41 } from "./40max-size2.js";
 
 //#region main.js
 var init_main = __esm({ "main.js"() {

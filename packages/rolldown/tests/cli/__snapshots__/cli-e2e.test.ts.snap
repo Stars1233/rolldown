@@ -24,7 +24,7 @@ OPTIONS
   --advanced-chunks.min-size <advanced-chunks.min-size>Minimum size of the chunk.
   --asset-file-names <name>   Name pattern for asset files.
   --banner <banner>           Code to insert the top of the bundled file (outside the wrapper function).
-  --checks.circular-dependency Wether to emit warnings when detecting circular dependencies.
+  --checks.circular-dependency Whether to emit warnings when detecting circular dependencies.
   --chunk-file-names <name>   Name pattern for emitted secondary chunks.
   --comments <comments>       Control comments in the output.
   --css-chunk-file-names <css-chunk-file-names>Name pattern for emitted css secondary chunks.
@@ -79,6 +79,23 @@ NOTES
   * If you are using the configuration, please pass the \`-c\` as the last argument if you ignore the default configuration file.
   * CLI options will override the configuration file.
   * For more information, please visit https://rolldown.rs/."
+`;
+
+exports[`cli options for bundling > cli default options 1`] = `
+"input cli default options {
+  input: 'index.js',
+  plugins: [
+    {
+      name: 'test-input-plugin',
+      options: [Function: options],
+      outputOptions: [Function: outputOptions]
+    }
+  ]
+}
+output cli default options {}
+<DIR>/index.js  chunk │ size: 0.13 kB
+
+"
 `;
 
 exports[`cli options for bundling > should handle negative boolean options 1`] = `
@@ -137,13 +154,13 @@ exports[`cli options for bundling > should handle single array options 1`] = `
 `;
 
 exports[`cli options for bundling > should handle single boolean option 1`] = `
-"<DIR>/index.js  chunk │ size: 0.09 kB
+"<DIR>/index.js  chunk │ size: 0.04 kB
 
 "
 `;
 
 exports[`cli options for bundling > should handle single boolean short options 1`] = `
-"<DIR>/index.js  chunk │ size: 0.10 kB
+"<DIR>/index.js  chunk │ size: 0.04 kB
 
 "
 `;
@@ -197,8 +214,10 @@ exports[`config > no package.json > should allow multiply options 1`] = `
 "
 `;
 
-exports[`config > no package.json > should allow multiply output + call options hook once 1`] = `
+exports[`config > no package.json > should allow multiply output + call options hook once  + call outputOptions hook 1`] = `
 "called options hook
+called output options hook
+called output options hook
 <DIR>/esm.js  chunk │ size: 0.18 kB
 <DIR>/cjs.js  chunk │ size: 0.19 kB
 
@@ -224,8 +243,10 @@ exports[`config > no package.json > should resolve rolldown.config.cjs 1`] = `
 "
 `;
 
-exports[`watch cli > should allow multiply output + + call options hook once 1`] = `
+exports[`watch cli > should allow multiply output + call options hook once + call outputOptions hook 1`] = `
 "called options hook
+called output options hook
+called output options hook
 <DIR>/esm.js  chunk │ size: 0.18 kB
 <DIR>/cjs.js  chunk │ size: 0.19 kB
 

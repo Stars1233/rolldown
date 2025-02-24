@@ -1,6 +1,0 @@
-{
-  "name": "@test-fixture/build",
-  "devDependencies": {
-    "rolldown-tests": "workspace:*"
-  }
-}

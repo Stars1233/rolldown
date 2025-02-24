@@ -184,7 +184,7 @@ fn extract_import_glob_options(arg: &Argument, opts: &mut ImportGlobOptions) {
                 Expression::NullLiteral(_) => "null".to_string(),
                 _ => return None,
               };
-              Some((key, value.to_string()))
+              Some((key, value))
             })
             .collect::<FxHashMap<String, String>>();
           if !map.is_empty() {
@@ -233,7 +233,8 @@ impl<'ast> GlobImportVisit<'ast, '_> {
       // TODO handle error
       for file in glob(&absolute_glob).unwrap() {
         let file = file.unwrap().as_path().relative(dir.as_ref()).to_slash_lossy().to_string();
-        files.push(format!("./{file}"));
+        let prefix = if file.starts_with('.') { "" } else { "./" };
+        files.push(format!("{prefix}{file}"));
       }
     }
   }
@@ -305,7 +306,7 @@ impl<'ast> GlobImportVisit<'ast, '_> {
           ),
         ));
 
-        self.ast_builder.expression_identifier_reference(SPAN, &name)
+        self.ast_builder.expression_identifier(SPAN, &name)
       } else {
         // import('./dir/bar.js')
         let mut import_expression = self.ast_builder.expression_import(
@@ -363,7 +364,7 @@ impl<'ast> GlobImportVisit<'ast, '_> {
                         SPAN,
                         Expression::from(self.ast_builder.member_expression_static(
                           SPAN,
-                          self.ast_builder.expression_identifier_reference(SPAN, "m"),
+                          self.ast_builder.expression_identifier(SPAN, "m"),
                           self.ast_builder.identifier_name(SPAN, import),
                           false,
                         )),
@@ -439,19 +440,14 @@ fn to_absolute_glob<'a>(
     glob = &glob[1..];
   }
 
-  let dir = {
-    let dir = Path::new(importer).parent().unwrap_or_else(|| Path::new(root));
-    dir.to_slash_lossy()
-  };
+  let dir = Path::new(importer).parent().unwrap_or_else(|| Path::new(root));
 
   let mut ret = if let Some(pre) = pre { String::from(pre) } else { String::new() };
 
   if let Some(glob) = glob.strip_prefix('/') {
     ret.push_str(&Path::new(root).join(glob).to_slash_lossy());
-  } else if let Some(glob) = glob.strip_prefix("./") {
-    ret.push_str(&Path::new(dir.as_ref()).join(glob).to_slash_lossy());
-  } else if let Some(glob) = glob.strip_prefix("../") {
-    ret.push_str(&Path::new(dir.as_ref()).join(glob).to_slash_lossy());
+  } else if glob.starts_with('.') {
+    ret.push_str(&dir.join(glob).to_slash_lossy());
   } else if glob.starts_with("**") {
     ret.push_str(glob);
   } else {
@@ -459,5 +455,5 @@ fn to_absolute_glob<'a>(
     // Needs to investigate if oxc resolver support this pattern
     return Err(anyhow::format_err!("Invalid glob pattern: {}", glob));
   };
-  Ok((ret, dir))
+  Ok((ret, dir.to_slash_lossy()))
 }

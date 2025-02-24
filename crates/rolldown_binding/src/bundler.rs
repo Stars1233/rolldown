@@ -107,6 +107,13 @@ impl Bundler {
   pub fn get_closed(&self) -> napi::Result<bool> {
     napi::bindgen_prelude::block_on(async { self.get_closed_impl().await })
   }
+
+  #[napi]
+  pub async fn generate_hmr_patch(&self, changed_files: Vec<String>) -> String {
+    // Compute out files that need to be updated based on given changed files.
+    let mut bundler_core = self.inner.lock().await;
+    bundler_core.generate_hmr_patch(changed_files)
+  }
 }
 
 impl Bundler {
@@ -192,15 +199,18 @@ impl Bundler {
     if let Some(on_log) = self.on_log.as_ref() {
       for warning in warnings {
         on_log
-          .call_async((
-            BindingLogLevel::Warn.to_string(),
-            BindingLog {
-              code: warning.kind().to_string(),
-              message: warning
-                .to_diagnostic_with(&DiagnosticOptions { cwd: self.cwd.clone() })
-                .to_color_string(),
-            },
-          ))
+          .call_async(
+            (
+              BindingLogLevel::Warn.to_string(),
+              BindingLog {
+                code: warning.kind().to_string(),
+                message: warning
+                  .to_diagnostic_with(&DiagnosticOptions { cwd: self.cwd.clone() })
+                  .to_color_string(),
+              },
+            )
+              .into(),
+          )
           .await;
       }
     }
