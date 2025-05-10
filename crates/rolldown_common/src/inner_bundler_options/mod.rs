@@ -2,13 +2,16 @@ use rolldown_utils::indexmap::FxIndexMap;
 use rustc_hash::FxHashMap;
 use std::{fmt::Debug, path::PathBuf};
 use types::advanced_chunks_options::AdvancedChunksOptions;
-use types::comments::Comments;
 use types::debug_options::DebugOptions;
 use types::inject_import::InjectImport;
 use types::invalidate_js_side_cache::InvalidateJsSideCache;
 use types::jsx::Jsx;
+use types::legal_comments::LegalComments;
+use types::log_level::LogLevel;
 use types::make_absolute_externals_relative::MakeAbsoluteExternalsRelative;
+use types::mark_module_loaded::MarkModuleLoaded;
 use types::minify_options::RawMinifyOptions;
+use types::on_log::OnLog;
 use types::output_option::{AssetFilenamesOutputOption, GlobalsOutputOption};
 use types::sanitize_filename::SanitizeFilename;
 use types::target::ESTarget;
@@ -179,7 +182,7 @@ pub struct BundlerOptions {
   )]
   pub transform: Option<oxc::transformer::TransformOptions>,
   pub watch: Option<WatchOption>,
-  pub comments: Option<Comments>,
+  pub legal_comments: Option<LegalComments>,
   pub target: Option<ESTarget>,
   pub polyfill_require: Option<bool>,
 
@@ -197,6 +200,20 @@ pub struct BundlerOptions {
     schemars(skip)
   )]
   pub invalidate_js_side_cache: Option<InvalidateJsSideCache>,
+  #[cfg_attr(
+    feature = "deserialize_bundler_options",
+    serde(default, skip_deserializing),
+    schemars(skip)
+  )]
+  pub mark_module_loaded: Option<MarkModuleLoaded>,
+  pub log_level: Option<LogLevel>,
+  #[cfg_attr(
+    feature = "deserialize_bundler_options",
+    serde(default, skip_deserializing),
+    schemars(skip)
+  )]
+  pub on_log: Option<OnLog>,
+  pub preserve_modules: Option<bool>,
 }
 
 impl BundlerOptions {

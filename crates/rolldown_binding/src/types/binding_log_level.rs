@@ -33,3 +33,14 @@ impl Display for BindingLogLevel {
     }
   }
 }
+
+impl From<BindingLogLevel> for rolldown_common::LogLevel {
+  fn from(value: BindingLogLevel) -> Self {
+    match value {
+      BindingLogLevel::Silent => Self::Silent,
+      BindingLogLevel::Warn => Self::Warn,
+      BindingLogLevel::Info => Self::Info,
+      BindingLogLevel::Debug => Self::Debug,
+    }
+  }
+}

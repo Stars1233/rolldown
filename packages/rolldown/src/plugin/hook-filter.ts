@@ -1,8 +1,9 @@
+import type { TopLevelFilterExpression } from '@rolldown/pluginutils';
 import type { ModuleType } from '../index';
 import type { MaybeArray } from '../types/utils';
 import type { StringOrRegExp } from '../types/utils';
 
-export type StringFilter<Value = StringOrRegExp> =
+export type GeneralHookFilter<Value = StringOrRegExp> =
   | MaybeArray<Value>
   | {
     include?: MaybeArray<Value>;
@@ -48,7 +49,11 @@ export interface HookFilter {
    * }}
    * ```
    */
-  id?: StringFilter;
+  id?: GeneralHookFilter;
   moduleType?: ModuleTypeFilter;
-  code?: StringFilter;
+  code?: GeneralHookFilter;
 }
+
+export type TUnionWithTopLevelFilterExpressionArray<T> =
+  | T
+  | TopLevelFilterExpression[];

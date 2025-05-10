@@ -6,14 +6,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use arcstr::ArcStr;
-use oxc::transformer::{InjectGlobalVariablesConfig, JsxOptions, TransformOptions};
+use oxc::transformer::{JsxOptions, TransformOptions};
+use oxc::transformer_plugins::InjectGlobalVariablesConfig;
 use rolldown_error::EventKindSwitcher;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::advanced_chunks_options::AdvancedChunksOptions;
-use super::comments::Comments;
 use super::experimental_options::ExperimentalOptions;
 use super::jsx::NormalizedJsxOptions;
+use super::legal_comments::LegalComments;
 use super::minify_options::MinifyOptions;
 use super::output_option::{AssetFilenamesOutputOption, ChunkFilenamesOutputOption};
 use super::sanitize_filename::SanitizeFilename;
@@ -27,8 +28,8 @@ use super::{
 };
 use crate::{
   DeferSyncScanDataOption, EmittedAsset, EsModuleFlag, FilenameTemplate, GlobalsOutputOption,
-  HashCharacters, InjectImport, InputItem, InvalidateJsSideCache, MakeAbsoluteExternalsRelative,
-  ModuleType, RollupPreRenderedAsset,
+  HashCharacters, InjectImport, InputItem, InvalidateJsSideCache, LogLevel,
+  MakeAbsoluteExternalsRelative, MarkModuleLoaded, ModuleType, OnLog, RollupPreRenderedAsset,
 };
 
 #[allow(clippy::struct_excessive_bools)] // Using raw booleans is more clear in this case
@@ -84,7 +85,7 @@ pub struct NormalizedBundlerOptions {
   pub profiler_names: bool,
   pub jsx: NormalizedJsxOptions,
   pub watch: WatchOption,
-  pub comments: Comments,
+  pub comments: LegalComments,
   pub drop_labels: FxHashSet<String>,
   pub target: ESTarget,
   pub polyfill_require: bool,
@@ -92,6 +93,10 @@ pub struct NormalizedBundlerOptions {
   pub transform_options: TransformOptions,
   pub make_absolute_externals_relative: MakeAbsoluteExternalsRelative,
   pub invalidate_js_side_cache: Option<InvalidateJsSideCache>,
+  pub mark_module_loaded: Option<MarkModuleLoaded>,
+  pub log_level: Option<LogLevel>,
+  pub on_log: Option<OnLog>,
+  pub preserve_modules: bool,
 }
 
 // This is only used for testing
@@ -142,7 +147,7 @@ impl Default for NormalizedBundlerOptions {
       checks: Default::default(),
       profiler_names: Default::default(),
       watch: Default::default(),
-      comments: Comments::None,
+      comments: LegalComments::None,
       drop_labels: Default::default(),
       target: Default::default(),
       polyfill_require: Default::default(),
@@ -151,6 +156,10 @@ impl Default for NormalizedBundlerOptions {
       make_absolute_externals_relative: Default::default(),
       jsx: Default::default(),
       invalidate_js_side_cache: Default::default(),
+      mark_module_loaded: Default::default(),
+      log_level: Default::default(),
+      on_log: Default::default(),
+      preserve_modules: false,
     }
   }
 }

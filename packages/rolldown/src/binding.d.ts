@@ -6,6 +6,12 @@ export type BindingStringOrRegex = string | RegExp
 export declare class BindingBundleEndEventData {
   output: string
   duration: number
+  get result(): Bundler
+}
+
+export declare class BindingBundleErrorEventData {
+  get result(): Bundler
+  get error(): Array<Error | BindingError>
 }
 
 export declare class BindingCallableBuiltinPlugin {
@@ -96,7 +102,7 @@ export declare class BindingOutputs {
 }
 
 export declare class BindingPluginContext {
-  load(specifier: string, sideEffects: BindingHookSideEffects | undefined, fn: (success: boolean) => void): Promise<void>
+  load(specifier: string, sideEffects: BindingHookSideEffects | undefined): Promise<void>
   resolve(specifier: string, importer?: string | undefined | null, extraOptions?: BindingPluginContextResolveOptions | undefined | null): Promise<BindingPluginContextResolvedId | null>
   emitFile(file: BindingEmittedAsset, assetFilename?: string | undefined | null, fnSanitizedFileName?: string | undefined | null): string
   emitChunk(file: BindingEmittedChunk): string
@@ -149,7 +155,7 @@ export declare class BindingWatcherEvent {
   watchChangeData(): BindingWatcherChangeData
   bundleEndData(): BindingBundleEndEventData
   bundleEventKind(): string
-  errors(): Array<Error | BindingError>
+  bundleErrorData(): BindingBundleErrorEventData
 }
 
 export declare class Bundler {
@@ -161,6 +167,7 @@ export declare class Bundler {
   get closed(): boolean
   get watchFiles(): Array<string>
   generateHmrPatch(changedFiles: Array<string>): Promise<BindingHmrOutput>
+  hmrInvalidate(file: string, firstInvalidatedBy?: string | undefined | null): Promise<BindingHmrOutput>
 }
 
 export declare class ParallelJsPluginRegistry {
@@ -174,6 +181,19 @@ export declare class ParseResult {
   get module(): EcmaScriptModule
   get comments(): Array<Comment>
   get errors(): Array<OxcError>
+}
+
+export declare class ResolverFactory {
+  constructor(options?: NapiResolveOptions | undefined | null)
+  static default(): ResolverFactory
+  /** Clone the resolver using the same underlying cache. */
+  cloneWithOptions(options: NapiResolveOptions): ResolverFactory
+  /** Clear the underlying cache. */
+  clearCache(): void
+  /** Synchronously resolve `specifier` at an absolute path to a `directory`. */
+  sync(directory: string, request: string): ResolveResult
+  /** Asynchronously resolve `specifier` at an absolute path to a `directory`. */
+  async(directory: string, request: string): Promise<ResolveResult>
 }
 
 export interface AliasItem {
@@ -309,9 +329,9 @@ export interface BindingExperimentalOptions {
   hmr?: BindingExperimentalHmrOptions
 }
 
-export interface BindingGeneralHookFilter {
-  include?: Array<BindingStringOrRegex>
-  exclude?: Array<BindingStringOrRegex>
+export interface BindingFilterToken {
+  kind: FilterTokenKind
+  payload?: BindingStringOrRegex | number
 }
 
 export interface BindingGlobImportPluginConfig {
@@ -328,6 +348,13 @@ export interface BindingHmrOutput {
   patch: string
   hmrBoundaries: Array<BindingHmrBoundaryOutput>
   fullReload: boolean
+  firstInvalidatedBy?: string
+  isSelfAccepting: boolean
+  fullReloadReason?: string
+}
+
+export interface BindingHookFilter {
+  value?: Array<Array<BindingFilterToken>>
 }
 
 export interface BindingHookJsLoadOutput {
@@ -428,6 +455,7 @@ export interface BindingInputOptions {
   makeAbsoluteExternalsRelative?: BindingMakeAbsoluteExternalsRelative
   debug?: BindingDebugOptions
   invalidateJsSideCache?: () => void
+  markModuleLoaded?: (id: string, success: boolean) => void
 }
 
 export interface BindingIsolatedDeclarationPluginConfig {
@@ -599,21 +627,22 @@ export interface BindingPluginOptions {
   buildStartMeta?: BindingPluginHookMeta
   resolveId?: (ctx: BindingPluginContext, specifier: string, importer: Nullable<string>, options: BindingHookResolveIdExtraArgs) => MaybePromise<VoidNullable<BindingHookResolveIdOutput>>
   resolveIdMeta?: BindingPluginHookMeta
-  resolveIdFilter?: BindingGeneralHookFilter
+  resolveIdFilter?: BindingHookFilter
   resolveDynamicImport?: (ctx: BindingPluginContext, specifier: string, importer: Nullable<string>) => MaybePromise<VoidNullable<BindingHookResolveIdOutput>>
   resolveDynamicImportMeta?: BindingPluginHookMeta
   load?: (ctx: BindingPluginContext, id: string) => MaybePromise<VoidNullable<BindingHookLoadOutput>>
   loadMeta?: BindingPluginHookMeta
-  loadFilter?: BindingGeneralHookFilter
+  loadFilter?: BindingHookFilter
   transform?: (ctx:  BindingTransformPluginContext, id: string, code: string, module_type: BindingTransformHookExtraArgs) => MaybePromise<VoidNullable<BindingHookTransformOutput>>
   transformMeta?: BindingPluginHookMeta
-  transformFilter?: BindingTransformHookFilter
+  transformFilter?: BindingHookFilter
   moduleParsed?: (ctx: BindingPluginContext, module: BindingModuleInfo) => MaybePromise<VoidNullable>
   moduleParsedMeta?: BindingPluginHookMeta
   buildEnd?: (ctx: BindingPluginContext, error?: (Error | BindingError)[]) => MaybePromise<VoidNullable>
   buildEndMeta?: BindingPluginHookMeta
   renderChunk?: (ctx: BindingPluginContext, code: string, chunk: BindingRenderedChunk, opts: BindingNormalizedOptions, meta: BindingRenderedChunkMeta) => MaybePromise<VoidNullable<BindingHookRenderChunkOutput>>
   renderChunkMeta?: BindingPluginHookMeta
+  renderChunkFilter?: BindingHookFilter
   augmentChunkHash?: (ctx: BindingPluginContext, chunk: BindingRenderedChunk) => MaybePromise<void | string>
   augmentChunkHashMeta?: BindingPluginHookMeta
   renderStart?: (ctx: BindingPluginContext, opts: BindingNormalizedOptions) => void
@@ -674,6 +703,11 @@ export interface BindingReplacePluginConfig {
 
 export interface BindingReportPluginConfig {
   isTty: boolean
+  isLib: boolean
+  assetsDir: string
+  chunkLimit: number
+  shouldLogInfo: boolean
+  reportCompressedSize: boolean
 }
 
 export type BindingResolvedExternal =
@@ -707,12 +741,6 @@ export interface BindingSourcemap {
 
 export interface BindingTransformHookExtraArgs {
   moduleType: string
-}
-
-export interface BindingTransformHookFilter {
-  code?: BindingGeneralHookFilter
-  moduleType?: Array<string>
-  id?: BindingGeneralHookFilter
 }
 
 export interface BindingTransformPluginConfig {
@@ -781,6 +809,47 @@ export interface CompilerAssumptions {
   noDocumentAll?: boolean
   objectRestNoSymbols?: boolean
   pureGetters?: boolean
+  /**
+   * When using public class fields, assume that they don't shadow any getter in the current class,
+   * in its subclasses or in its superclass. Thus, it's safe to assign them rather than using
+   * `Object.defineProperty`.
+   *
+   * For example:
+   *
+   * Input:
+   * ```js
+   * class Test {
+   *  field = 2;
+   *
+   *  static staticField = 3;
+   * }
+   * ```
+   *
+   * When `set_public_class_fields` is `true`, the output will be:
+   * ```js
+   * class Test {
+   *  constructor() {
+   *    this.field = 2;
+   *  }
+   * }
+   * Test.staticField = 3;
+   * ```
+   *
+   * Otherwise, the output will be:
+   * ```js
+   * import _defineProperty from "@oxc-project/runtime/helpers/defineProperty";
+   * class Test {
+   *   constructor() {
+   *     _defineProperty(this, "field", 2);
+   *   }
+   * }
+   * _defineProperty(Test, "staticField", 3);
+   * ```
+   *
+   * NOTE: For TypeScript, if you wanted behavior is equivalent to `useDefineForClassFields: false`, you should
+   * set both `set_public_class_fields` and [`crate::TypeScriptOptions::remove_class_fields_without_initializer`]
+   * to `true`.
+   */
   setPublicClassFields?: boolean
 }
 
@@ -830,6 +899,12 @@ export interface EcmaScriptModule {
   dynamicImports: Array<DynamicImport>
   /** Span positions` of `import.meta` */
   importMetas: Array<Span>
+}
+
+export declare enum EnforceExtension {
+  Auto = 0,
+  Enabled = 1,
+  Disabled = 2
 }
 
 export interface ErrorLabel {
@@ -894,6 +969,16 @@ export interface ExtensionAliasItem {
   target: string
   replacements: Array<string>
 }
+
+export type FilterTokenKind =  'Id'|
+'Code'|
+'ModuleType'|
+'And'|
+'Or'|
+'Not'|
+'Include'|
+'Exclude'|
+'CleanUrl';
 
 /**
  * Get offset within a `Uint8Array` which is aligned on 4 GiB.
@@ -1143,6 +1228,166 @@ export interface ModuleRunnerTransformResult {
   errors: Array<OxcError>
 }
 
+/**
+ * Module Resolution Options
+ *
+ * Options are directly ported from [enhanced-resolve](https://github.com/webpack/enhanced-resolve#resolver-options).
+ *
+ * See [webpack resolve](https://webpack.js.org/configuration/resolve/) for information and examples
+ */
+export interface NapiResolveOptions {
+  /**
+   * Path to TypeScript configuration file.
+   *
+   * Default `None`
+   */
+  tsconfig?: TsconfigOptions
+  /**
+   * Alias for [ResolveOptions::alias] and [ResolveOptions::fallback].
+   *
+   * For the second value of the tuple, `None -> AliasValue::Ignore`, Some(String) ->
+   * AliasValue::Path(String)`
+   * Create aliases to import or require certain modules more easily.
+   * A trailing $ can also be added to the given object's keys to signify an exact match.
+   */
+  alias?: Record<string, Array<string | undefined | null>>
+  /**
+   * A list of alias fields in description files.
+   * Specify a field, such as `browser`, to be parsed according to [this specification](https://github.com/defunctzombie/package-browser-field-spec).
+   * Can be a path to json object such as `["path", "to", "exports"]`.
+   *
+   * Default `[]`
+   */
+  aliasFields?: (string | string[])[]
+  /**
+   * Condition names for exports field which defines entry points of a package.
+   * The key order in the exports field is significant. During condition matching, earlier entries have higher priority and take precedence over later entries.
+   *
+   * Default `[]`
+   */
+  conditionNames?: Array<string>
+  /**
+   * If true, it will not allow extension-less files.
+   * So by default `require('./foo')` works if `./foo` has a `.js` extension,
+   * but with this enabled only `require('./foo.js')` will work.
+   *
+   * Default to `true` when [ResolveOptions::extensions] contains an empty string.
+   * Use `Some(false)` to disable the behavior.
+   * See <https://github.com/webpack/enhanced-resolve/pull/285>
+   *
+   * Default None, which is the same as `Some(false)` when the above empty rule is not applied.
+   */
+  enforceExtension?: EnforceExtension
+  /**
+   * A list of exports fields in description files.
+   * Can be a path to json object such as `["path", "to", "exports"]`.
+   *
+   * Default `[["exports"]]`.
+   */
+  exportsFields?: (string | string[])[]
+  /**
+   * Fields from `package.json` which are used to provide the internal requests of a package
+   * (requests starting with # are considered internal).
+   *
+   * Can be a path to a JSON object such as `["path", "to", "imports"]`.
+   *
+   * Default `[["imports"]]`.
+   */
+  importsFields?: (string | string[])[]
+  /**
+   * An object which maps extension to extension aliases.
+   *
+   * Default `{}`
+   */
+  extensionAlias?: Record<string, Array<string>>
+  /**
+   * Attempt to resolve these extensions in order.
+   * If multiple files share the same name but have different extensions,
+   * will resolve the one with the extension listed first in the array and skip the rest.
+   *
+   * Default `[".js", ".json", ".node"]`
+   */
+  extensions?: Array<string>
+  /**
+   * Redirect module requests when normal resolving fails.
+   *
+   * Default `[]`
+   */
+  fallback?: Record<string, Array<string | undefined | null>>
+  /**
+   * Request passed to resolve is already fully specified and extensions or main files are not resolved for it (they are still resolved for internal requests).
+   *
+   * See also webpack configuration [resolve.fullySpecified](https://webpack.js.org/configuration/module/#resolvefullyspecified)
+   *
+   * Default `false`
+   */
+  fullySpecified?: boolean
+  /**
+   * A list of main fields in description files
+   *
+   * Default `["main"]`.
+   */
+  mainFields?: string | string[]
+  /**
+   * The filename to be used while resolving directories.
+   *
+   * Default `["index"]`
+   */
+  mainFiles?: Array<string>
+  /**
+   * A list of directories to resolve modules from, can be absolute path or folder name.
+   *
+   * Default `["node_modules"]`
+   */
+  modules?: string | string[]
+  /**
+   * Resolve to a context instead of a file.
+   *
+   * Default `false`
+   */
+  resolveToContext?: boolean
+  /**
+   * Prefer to resolve module requests as relative requests instead of using modules from node_modules directories.
+   *
+   * Default `false`
+   */
+  preferRelative?: boolean
+  /**
+   * Prefer to resolve server-relative urls as absolute paths before falling back to resolve in ResolveOptions::roots.
+   *
+   * Default `false`
+   */
+  preferAbsolute?: boolean
+  /**
+   * A list of resolve restrictions to restrict the paths that a request can be resolved on.
+   *
+   * Default `[]`
+   */
+  restrictions?: Array<Restriction>
+  /**
+   * A list of directories where requests of server-relative URLs (starting with '/') are resolved.
+   * On non-Windows systems these requests are resolved as an absolute path first.
+   *
+   * Default `[]`
+   */
+  roots?: Array<string>
+  /**
+   * Whether to resolve symlinks to their symlinked location.
+   * When enabled, symlinked resources are resolved to their real path, not their symlinked location.
+   * Note that this may cause module resolution to fail when using tools that symlink packages (like npm link).
+   *
+   * Default `true`
+   */
+  symlinks?: boolean
+  /**
+   * Whether to parse [module.builtinModules](https://nodejs.org/api/module.html#modulebuiltinmodules) or not.
+   * For example, "zlib" will throw [crate::ResolveError::Builtin] when set to true.
+   *
+   * Default `false`
+   */
+  builtinModules?: boolean
+}
+
 export interface OxcError {
   severity: Severity
   message: string
@@ -1250,6 +1495,23 @@ export interface ReactRefreshOptions {
 }
 
 export declare function registerPlugins(id: number, plugins: Array<BindingPluginWithIndex>): void
+
+export interface ResolveResult {
+  path?: string
+  error?: string
+  /** "type" field in the package.json file */
+  moduleType?: string
+  packageJsonPath?: string
+}
+
+/**
+ * Alias Value for [ResolveOptions::alias] and [ResolveOptions::fallback].
+ * Use struct because napi don't support structured union now
+ */
+export interface Restriction {
+  path?: string
+  regex?: string
+}
 
 export type Severity =  'Error'|
 'Warning'|
@@ -1375,6 +1637,8 @@ export interface StaticImportEntry {
   isType: boolean
 }
 
+export declare function sync(path: string, request: string): ResolveResult
+
 /**
  * Transpile a JavaScript or TypeScript into a target ECMAScript version.
  *
@@ -1496,12 +1760,77 @@ export interface TransformResult {
   errors: Array<OxcError>
 }
 
+/**
+ * Tsconfig Options
+ *
+ * Derived from [tsconfig-paths-webpack-plugin](https://github.com/dividab/tsconfig-paths-webpack-plugin#options)
+ */
+export interface TsconfigOptions {
+  /**
+   * Allows you to specify where to find the TypeScript configuration file.
+   * You may provide
+   * * a relative path to the configuration file. It will be resolved relative to cwd.
+   * * an absolute path to the configuration file.
+   */
+  configFile: string
+  /**
+   * Support for Typescript Project References.
+   *
+   * * `'auto'`: use the `references` field from tsconfig of `config_file`.
+   * * `string[]`: manually provided relative or absolute path.
+   */
+  references?: 'auto' | string[]
+}
+
 export interface TypeScriptOptions {
   jsxPragma?: string
   jsxPragmaFrag?: string
   onlyRemoveTypeImports?: boolean
   allowNamespaces?: boolean
+  /**
+   * When enabled, type-only class fields are only removed if they are prefixed with the declare modifier:
+   *
+   * @deprecated
+   *
+   * Allowing `declare` fields is built-in support in Oxc without any option. If you want to remove class fields
+   * without initializer, you can use `remove_class_fields_without_initializer: true` instead.
+   */
   allowDeclareFields?: boolean
+  /**
+   * When enabled, class fields without initializers are removed.
+   *
+   * For example:
+   * ```ts
+   * class Foo {
+   *    x: number;
+   *    y: number = 0;
+   * }
+   * ```
+   * // transform into
+   * ```js
+   * class Foo {
+   *    x: number;
+   * }
+   * ```
+   *
+   * The option is used to align with the behavior of TypeScript's `useDefineForClassFields: false` option.
+   * When you want to enable this, you also need to set [`crate::CompilerAssumptions::set_public_class_fields`]
+   * to `true`. The `set_public_class_fields: true` + `remove_class_fields_without_initializer: true` is
+   * equivalent to `useDefineForClassFields: false` in TypeScript.
+   *
+   * When `set_public_class_fields` is true and class-properties plugin is enabled, the above example transforms into:
+   *
+   * ```js
+   * class Foo {
+   *   constructor() {
+   *     this.y = 0;
+   *   }
+   * }
+   * ```
+   *
+   * Defaults to `false`.
+   */
+  removeClassFieldsWithoutInitializer?: boolean
   /**
    * Also generate a `.d.ts` declaration file for TypeScript files.
    *

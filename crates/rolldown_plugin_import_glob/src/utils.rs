@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use glob::Pattern;
 use oxc::ast::NONE;
 use oxc::ast::ast::{
   Argument, ArrayExpressionElement, Expression, FormalParameterKind, ImportOrExportKind,
@@ -14,7 +13,7 @@ use rolldown_ecmascript_utils::ExpressionExt;
 use sugar_path::SugarPath;
 
 pub struct GlobImportVisit<'ast, 'a> {
-  pub id: Cow<'a, str>,
+  pub id: &'a str,
   pub root: &'a PathBuf,
   pub ast_builder: oxc::ast::AstBuilder<'ast>,
   pub restore_query_extension: bool,
@@ -137,19 +136,21 @@ impl<'ast> GlobImportVisit<'ast, '_> {
           Some("default") => {
             self.ast_builder.import_declaration_specifier_import_default_specifier(
               SPAN,
-              self.ast_builder.binding_identifier(SPAN, &name),
+              self.ast_builder.binding_identifier(SPAN, self.ast_builder.atom(&name)),
             )
           }
           Some("*") | None => {
             self.ast_builder.import_declaration_specifier_import_namespace_specifier(
               SPAN,
-              self.ast_builder.binding_identifier(SPAN, &name),
+              self.ast_builder.binding_identifier(SPAN, self.ast_builder.atom(&name)),
             )
           }
           Some(import) => self.ast_builder.import_declaration_specifier_import_specifier(
             SPAN,
-            self.ast_builder.module_export_name_identifier_reference(SPAN, import),
-            self.ast_builder.binding_identifier(SPAN, &name),
+            self
+              .ast_builder
+              .module_export_name_identifier_reference(SPAN, self.ast_builder.atom(import)),
+            self.ast_builder.binding_identifier(SPAN, self.ast_builder.atom(&name)),
             ImportOrExportKind::Value,
           ),
         };
@@ -158,21 +159,25 @@ impl<'ast> GlobImportVisit<'ast, '_> {
           self.ast_builder.module_declaration_import_declaration(
             SPAN,
             Some(self.ast_builder.vec1(module_specifier)),
-            self.ast_builder.string_literal(Span::default(), formatted_file.as_str(), None),
+            self.ast_builder.string_literal(
+              Span::default(),
+              self.ast_builder.atom(formatted_file.as_str()),
+              None,
+            ),
             None,
             NONE,
             ImportOrExportKind::Value,
           ),
         ));
 
-        self.ast_builder.expression_identifier(SPAN, &name)
+        self.ast_builder.expression_identifier(SPAN, self.ast_builder.atom(&name))
       } else {
         // import('./dir/bar.js')
         let mut import_expression = self.ast_builder.expression_import(
           SPAN,
           self.ast_builder.expression_string_literal(
             Span::default(),
-            formatted_file.as_str(),
+            self.ast_builder.atom(formatted_file.as_str()),
             None,
           ),
           None,
@@ -225,7 +230,7 @@ impl<'ast> GlobImportVisit<'ast, '_> {
                         Expression::from(self.ast_builder.member_expression_static(
                           SPAN,
                           self.ast_builder.expression_identifier(SPAN, "m"),
-                          self.ast_builder.identifier_name(SPAN, import),
+                          self.ast_builder.identifier_name(SPAN, self.ast_builder.atom(import)),
                           false,
                         )),
                       )),
@@ -277,7 +282,7 @@ impl<'ast> GlobImportVisit<'ast, '_> {
           PropertyKind::Init,
           PropertyKey::from(self.ast_builder.expression_string_literal(
             Span::default(),
-            file,
+            self.ast_builder.atom(file),
             None,
           )),
           value,
@@ -299,35 +304,21 @@ impl GlobImportVisit<'_, '_> {
   }
 
   fn to_absolute_glob<'a>(&self, glob: &'a str, dir: &Path, root: &Path) -> Cow<'a, str> {
-    // hack some syntax that `glob` did not support
-    // 1. `**.js` -> `*.js`
-    let index = glob.rfind('/').unwrap_or(0);
-    let glob = if glob[index..].contains("**.") {
-      let mut result = String::with_capacity(glob.len());
-      if index != 0 {
-        result.push_str(&glob[..index]);
-      }
-      result.push_str(&glob[index..].replace("**.", "*."));
-      Cow::Owned(result)
-    } else {
-      Cow::Borrowed(glob)
-    };
-
     let absolute_glob = if let Some(glob) = glob.strip_prefix('/') {
       root.join(glob)
     } else if glob.starts_with('.') {
-      dir.join(glob.as_ref())
+      dir.join(glob)
     } else if glob.starts_with("**") {
-      return glob;
+      return Cow::Borrowed(glob);
     } else {
-      // https://github.com/rolldown/vite/blob/454c8fff9f7115ed29281c2d927366280508a0ab/packages/vite/src/node/plugins/importMetaGlob.ts#L563-L569
       // TODO: Needs to investigate if oxc resolver support this pattern
+      // https://github.com/rolldown/vite/blob/454c8fff/packages/vite/src/node/plugins/importMetaGlob.ts#L563-L569
       panic!(
         "Invalid glob pattern: {glob} (resolved: '{}'), it must start with '/' or './'.",
         self.id
       );
     };
-    Cow::Owned(absolute_glob.to_slash_lossy().to_string())
+    Cow::Owned(absolute_glob.normalize().to_slash_lossy().into_owned())
   }
 
   fn relative_path(&self, path: &Path, to: Option<&Path>) -> String {
@@ -341,14 +332,26 @@ impl GlobImportVisit<'_, '_> {
     }
   }
 
+  fn split_path_and_glob(path: &str) -> (&str, Option<&str>) {
+    let mut last_slash = 0;
+    for (i, b) in path.as_bytes().iter().enumerate() {
+      if *b == b'/' {
+        last_slash = i + 1;
+      } else if [b'*', b'?', b'[', b']', b'{', b'}'].contains(b) {
+        return (&path[..last_slash], Some(&path[last_slash..]));
+      }
+    }
+    (path, None)
+  }
+
   fn eval_glob_expr(&self, arg: &Argument, files: &mut Vec<ImportGlobFileData>) {
-    let root = Path::new(self.root);
+    let root = Path::new(&self.root);
     let is_virtual_module = self.is_virtual_module();
 
     let dir = if is_virtual_module {
       root
     } else {
-      let id = Path::new(self.id.as_ref());
+      let id = Path::new(self.id);
       id.parent().unwrap_or(root)
     };
 
@@ -359,8 +362,7 @@ impl GlobImportVisit<'_, '_> {
     match arg {
       Argument::StringLiteral(str) => {
         if let Some(glob) = str.value.strip_prefix('!') {
-          let glob = self.to_absolute_glob(glob, dir, root);
-          negated_globs.push(Pattern::new(&glob).unwrap());
+          negated_globs.push(self.to_absolute_glob(glob, dir, root));
         } else {
           positive_globs.push(self.to_absolute_glob(&str.value, dir, root));
           if !str.value.starts_with('.') {
@@ -372,8 +374,7 @@ impl GlobImportVisit<'_, '_> {
         for expr in &array_expr.elements {
           if let ArrayExpressionElement::StringLiteral(str) = expr {
             if let Some(glob) = str.value.strip_prefix('!') {
-              let glob = self.to_absolute_glob(glob, dir, root);
-              negated_globs.push(Pattern::new(&glob).unwrap());
+              negated_globs.push(self.to_absolute_glob(glob, dir, root));
             } else {
               positive_globs.push(self.to_absolute_glob(&str.value, dir, root));
               if !str.value.starts_with('.') {
@@ -391,28 +392,39 @@ impl GlobImportVisit<'_, '_> {
       "In virtual modules, all globs must start with '/'"
     );
 
-    let self_path = self.relative_path(Path::new(self.id.as_ref()), Some(dir));
+    let self_path = self.relative_path(Path::new(self.id), Some(dir));
     for glob_expr in positive_globs {
-      for file in glob::glob(&glob_expr).unwrap() {
-        let file = file.unwrap();
-        if negated_globs.iter().any(|g| g.matches_path(&file)) {
+      let (path, glob) = Self::split_path_and_glob(&glob_expr);
+      let entries = walkdir::WalkDir::new(path)
+        .sort_by(|a, b| a.file_name().cmp(b.file_name()))
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| !e.file_type().is_dir());
+
+      let p = path.len();
+      for entry in entries {
+        let file = entry.path();
+        let path = file.to_string_lossy();
+
+        if glob.as_ref().is_some_and(|glob| !fast_glob::glob_match(glob, &path[p..]))
+          || negated_globs.iter().any(|g| fast_glob::glob_match(&**g, &*path))
+        {
           continue;
         }
 
-        let file_path = self.relative_path(&file, None);
+        let file_path = self.relative_path(file, None);
         if is_virtual_module {
           let path = if file_path.starts_with('/') { file_path } else { format!("/{file_path}") };
           files.push(ImportGlobFileData { file_path: None, import_path: path });
           continue;
         }
 
-        let import_path = self.relative_path(&file, Some(dir));
+        let import_path = self.relative_path(file, Some(dir));
         if self_path == import_path {
           continue;
         }
 
         let file_path = if is_relative { None } else { Some(file_path) };
-
         files.push(ImportGlobFileData { file_path, import_path });
       }
     }

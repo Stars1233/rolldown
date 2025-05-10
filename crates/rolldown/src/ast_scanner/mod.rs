@@ -79,6 +79,7 @@ pub struct ScanResult {
   pub new_url_references: FxHashMap<Span, ImportRecordIdx>,
   pub this_expr_replace_map: FxHashMap<Span, ThisExprReplaceKind>,
   pub hmr_info: HmrInfo,
+  pub hmr_hot_ref: Option<SymbolRef>,
 }
 
 pub struct AstScanner<'me, 'ast> {
@@ -134,6 +135,10 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
     let name = concat_string!(legitimized_repr_name, "_exports");
     let namespace_object_ref = symbol_ref_db.create_facade_root_symbol_ref(&name);
 
+    let hmr_hot_ref = options.experimental.hmr.as_ref().map(|_| {
+      symbol_ref_db.create_facade_root_symbol_ref(&concat_string!(legitimized_repr_name, "_hot"))
+    });
+
     let result = ScanResult {
       named_imports: FxIndexMap::default(),
       named_exports: FxHashMap::default(),
@@ -160,6 +165,7 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       new_url_references: FxHashMap::default(),
       this_expr_replace_map: FxHashMap::default(),
       hmr_info: HmrInfo::default(),
+      hmr_hot_ref,
     };
 
     Self {
@@ -452,9 +458,6 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       record_id,
       span_imported,
     };
-    if name_import.imported.is_default() {
-      self.result.import_records[record_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_DEFAULT);
-    }
     self.result.named_exports.insert(
       export_name.into(),
       LocalExport { referenced: generated_imported_as_ref, span: name_import.span_imported },
@@ -480,7 +483,6 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       record_id,
     };
 
-    self.result.import_records[record_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_STAR);
     self.result.named_exports.insert(
       export_name.into(),
       LocalExport { referenced: generated_imported_as_ref, span: name_import.span_imported },
@@ -626,18 +628,13 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
         let sym = spec.local.expect_symbol_id();
         let imported = spec.imported.name();
         self.add_named_import(sym, imported.as_str(), rec_id, spec.imported.span());
-        if imported == "default" {
-          self.result.import_records[rec_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_DEFAULT);
-        }
       }
       ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(spec) => {
         self.add_named_import(spec.local.expect_symbol_id(), "default", rec_id, spec.span);
-        self.result.import_records[rec_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_DEFAULT);
       }
       ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(spec) => {
         let symbol_id = spec.local.expect_symbol_id();
         self.add_star_import(symbol_id, rec_id, spec.span);
-        self.result.import_records[rec_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_STAR);
       }
     });
   }

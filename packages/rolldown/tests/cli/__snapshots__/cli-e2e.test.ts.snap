@@ -256,6 +256,12 @@ exports[`config > should allow loading ts config from non-working dir 1`] = `
 "
 `;
 
+exports[`config > should allow loading ts config with oxnode 1`] = `
+"<DIR>/index.js  chunk │ size: 0.11 kB
+
+"
+`;
+
 exports[`config > should allow loading ts config with tsx 1`] = `
 "<DIR>/index.js  chunk │ size: 0.11 kB
 
@@ -319,7 +325,8 @@ onLog called:
 this.meta.watchMode false
 (test plugin) trigger onLog
 buildStart called:
-this.meta.watchMode false"
+this.meta.watchMode false
+closeBundle called:"
 `;
 
 exports[`watch cli > should require both ROLLDOWN_WATCH and this.meta.watchMode to be true 1`] = `
@@ -334,5 +341,6 @@ onLog called:
 this.meta.watchMode true
 (test plugin) trigger onLog
 buildStart called:
-this.meta.watchMode true"
+this.meta.watchMode true
+closeBundle called:"
 `;

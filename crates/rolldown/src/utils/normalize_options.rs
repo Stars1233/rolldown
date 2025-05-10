@@ -1,9 +1,10 @@
 use std::{borrow::Cow, path::Path};
 
-use oxc::transformer::{ESTarget, InjectGlobalVariablesConfig, TransformOptions};
+use oxc::transformer::{ESTarget, TransformOptions};
+use oxc::transformer_plugins::InjectGlobalVariablesConfig;
 use rolldown_common::{
-  Comments, GlobalsOutputOption, InjectImport, MinifyOptions, ModuleType, NormalizedBundlerOptions,
-  NormalizedJsxOptions, OutputFormat, Platform,
+  GlobalsOutputOption, InjectImport, LegalComments, MinifyOptions, ModuleType,
+  NormalizedBundlerOptions, NormalizedJsxOptions, OutputFormat, Platform,
 };
 use rolldown_error::{BuildDiagnostic, InvalidOptionType};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -127,14 +128,14 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
           .iter()
           .map(|raw| match raw {
             InjectImport::Named { imported, alias, from } => {
-              oxc::transformer::InjectImport::named_specifier(
+              oxc::transformer_plugins::InjectImport::named_specifier(
                 from,
                 Some(imported),
                 alias.as_deref().unwrap_or(imported),
               )
             }
             InjectImport::Namespace { alias, from } => {
-              oxc::transformer::InjectImport::namespace_specifier(from, alias)
+              oxc::transformer_plugins::InjectImport::namespace_specifier(from, alias)
             }
           })
           .collect()
@@ -239,7 +240,7 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
     checks: raw_options.checks.unwrap_or_default().into(),
     jsx,
     watch: raw_options.watch.unwrap_or_default(),
-    comments: raw_options.comments.unwrap_or(Comments::Preserve),
+    comments: raw_options.legal_comments.unwrap_or(LegalComments::Preserve),
     drop_labels: FxHashSet::from_iter(raw_options.drop_labels.unwrap_or_default()),
     target,
     keep_names: raw_options.keep_names.unwrap_or_default(),
@@ -250,6 +251,10 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
       .make_absolute_externals_relative
       .unwrap_or_default(),
     invalidate_js_side_cache: raw_options.invalidate_js_side_cache,
+    mark_module_loaded: raw_options.mark_module_loaded,
+    log_level: raw_options.log_level,
+    on_log: raw_options.on_log,
+    preserve_modules: raw_options.preserve_modules.unwrap_or_default(),
   };
 
   NormalizeOptionsReturn { options: normalized, resolve_options: raw_resolve, warnings }

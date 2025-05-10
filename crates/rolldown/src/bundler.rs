@@ -87,6 +87,12 @@ impl Bundler {
     Ok(())
   }
 
+  // The rollup always crate a new build at watch mode, it cloud be call multiply times.
+  // Here only reset the closed flag to make it possible to call again.
+  pub fn reset_closed(&mut self) {
+    self.closed = false;
+  }
+
   #[tracing::instrument(target = "devtool", level = "debug", skip_all)]
   pub async fn scan(&mut self, changed_ids: Vec<ArcStr>) -> BuildResult<NormalizedScanStageOutput> {
     trace_action!(action::BuildStart { action: "BuildStart" });
@@ -254,11 +260,19 @@ impl Bundler {
   }
 
   pub async fn generate_hmr_patch(&mut self, changed_files: Vec<String>) -> BuildResult<HmrOutput> {
+    self.hmr_manager.as_mut().expect("HMR manager is not initialized").hmr(changed_files).await
+  }
+
+  pub async fn hmr_invalidate(
+    &mut self,
+    file: String,
+    first_invalidated_by: Option<String>,
+  ) -> BuildResult<HmrOutput> {
     self
       .hmr_manager
       .as_mut()
       .expect("HMR manager is not initialized")
-      .generate_hmr_patch(changed_files)
+      .hmr_invalidate(file, first_invalidated_by)
       .await
   }
 

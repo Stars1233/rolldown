@@ -181,6 +181,28 @@ pub fn normalize_binding_options(
     }))
   });
 
+  let mark_module_loaded = input_options.mark_module_loaded.map(|ts_fn| {
+    rolldown::MarkModuleLoaded::new(Arc::new(move |module_id, success| {
+      let ts_fn = Arc::clone(&ts_fn);
+      let module_id = module_id.to_string();
+      Box::pin(async move {
+        ts_fn.invoke_async((module_id, success).into()).await.map_err(anyhow::Error::from)
+      })
+    }))
+  });
+
+  let on_log = input_options.on_log.map(|ts_fn| {
+    rolldown::OnLog::new(Arc::new(move |level, log| {
+      let ts_fn = Arc::clone(&ts_fn);
+      Box::pin(async move {
+        ts_fn
+          .invoke_async((level.to_string(), log.into()).into())
+          .await
+          .map_err(anyhow::Error::from)
+      })
+    }))
+  });
+
   let mut module_types = None;
   if let Some(raw) = input_options.module_types {
     let mut tmp: FxHashMap<_, _> = FxHashMapExt::with_capacity(raw.len());
@@ -311,14 +333,14 @@ pub fn normalize_binding_options(
     profiler_names: input_options.profiler_names,
     jsx: input_options.jsx.map(Into::into),
     watch: input_options.watch.map(TryInto::try_into).transpose()?,
-    comments: output_options
+    legal_comments: output_options
       .comments
       .map(|inner| match inner.as_str() {
-        "none" => Ok(rolldown::Comments::None),
-        "preserve-legal" => Ok(rolldown::Comments::PreserveLegal),
+        "none" => Ok(rolldown::LegalComments::None),
+        "preserve-legal" => Ok(rolldown::LegalComments::Inline),
         _ => Err(napi::Error::new(
           napi::Status::GenericFailure,
-          format!("Invalid valid for `comments` option: {inner}"),
+          format!("Invalid value for `comments` option: {inner}"),
         )),
       })
       .transpose()?,
@@ -333,6 +355,11 @@ pub fn normalize_binding_options(
       .map(Into::into),
     debug: input_options.debug.map(|inner| rolldown::DebugOptions { session_id: inner.session_id }),
     invalidate_js_side_cache,
+    mark_module_loaded,
+    log_level: Some(input_options.log_level.into()),
+    on_log,
+    // TODO: binding
+    preserve_modules: None,
   };
 
   #[cfg(not(target_family = "wasm"))]

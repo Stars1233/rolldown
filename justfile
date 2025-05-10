@@ -138,6 +138,10 @@ build-js-glue:
 build-browser mode="debug":
     pnpm run --filter "@rolldown/browser" build:{{ mode }}
 
+# This will build the package `@rolldown/pluginutils`.
+build-pluginutils:
+    pnpm run --filter "@rolldown/pluginutils" build
+
 run *args:
     pnpm rolldown {{ args }}
 
@@ -158,7 +162,7 @@ bump-packages *args:
     node --import @oxc-node/core/register ./scripts/misc/bump-version.js {{ args }}
 
 changelog:
-    pnpm conventional-changelog --preset angular --i CHANGELOG.md --same-file --pkg=./packages/rolldown/package.json
+    pnpm conventional-changelog --preset conventionalcommits --i CHANGELOG.md --same-file --pkg=./packages/rolldown/package.json
 
 check-setup-prerequisites:
     node ./scripts/misc/setup-prerequisites/node.js

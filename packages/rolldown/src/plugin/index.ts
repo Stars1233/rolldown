@@ -7,10 +7,9 @@ import type { BuiltinPlugin } from '../builtin-plugin/constructors';
 import type { DefinedHookNames } from '../constants/plugin';
 import type { DEFINED_HOOK_NAMES } from '../constants/plugin';
 import type { SYMBOL_FOR_RESOLVE_CALLER_THAT_SKIP_SELF } from '../constants/plugin-context';
-import type { LogLevel } from '../log/logging';
+import type { LogLevel, RollupLog } from '../log/logging';
 import type { NormalizedInputOptions } from '../options/normalized-input-options';
 import type { NormalizedOutputOptions } from '../options/normalized-output-options';
-import type { RollupLog } from '../types/misc';
 import type { ModuleInfo } from '../types/module-info';
 import type { OutputBundle } from '../types/output-bundle';
 import type { RenderedChunk } from '../types/rolldown-output';
@@ -21,7 +20,11 @@ import type {
   NullValue,
   PartialNull,
 } from '../types/utils';
-import type { HookFilter, StringFilter } from './hook-filter';
+import type {
+  GeneralHookFilter,
+  HookFilter,
+  TUnionWithTopLevelFilterExpressionArray,
+} from './hook-filter';
 import type { MinimalPluginContext } from './minimal-plugin-context';
 import type { ParallelPlugin } from './parallel-plugin';
 import type { PluginContext } from './plugin-context';
@@ -272,10 +275,22 @@ export type ParallelPluginHooks = Exclude<
   keyof FunctionPluginHooks | AddonHooks,
   FirstPluginHooks | SequentialPluginHooks
 >;
+
 export type HookFilterExtension<K extends keyof FunctionPluginHooks> = K extends
-  'transform' ? { filter?: HookFilter }
-  : K extends 'load' ? { filter?: Pick<HookFilter, 'id'> }
-  : K extends 'resolveId' ? { filter?: { id?: StringFilter<RegExp> } }
+  'transform' ? { filter?: TUnionWithTopLevelFilterExpressionArray<HookFilter> }
+  : K extends 'load' ? {
+      filter?: TUnionWithTopLevelFilterExpressionArray<Pick<HookFilter, 'id'>>;
+    }
+  : K extends 'resolveId' ? {
+      filter?: TUnionWithTopLevelFilterExpressionArray<
+        { id?: GeneralHookFilter<RegExp> }
+      >;
+    }
+  : K extends 'renderChunk' ? {
+      filter?: TUnionWithTopLevelFilterExpressionArray<
+        Pick<HookFilter, 'code'>
+      >;
+    }
   : {};
 
 export type PluginHooks = {
