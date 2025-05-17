@@ -12,15 +12,17 @@
 ```
 ### rolldown
 ```js
+'use strict';
+
+
 (function(exports) {
 
-"use strict";
 
 //#region entry.js
 let a = 1;
 
 //#endregion
-exports.a = a
+exports.a = a;
 return exports;
 })({});
 ```

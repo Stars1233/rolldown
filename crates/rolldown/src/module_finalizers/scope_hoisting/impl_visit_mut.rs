@@ -5,10 +5,10 @@ use oxc::{
     match_member_expression,
   },
   ast_visit::{VisitMut, walk_mut},
-  span::{SPAN, Span},
+  span::{GetSpan, SPAN, Span},
 };
 use rolldown_common::{ExportsKind, Module, StmtInfoIdx, SymbolRef, ThisExprReplaceKind, WrapKind};
-use rolldown_ecmascript_utils::ExpressionExt;
+use rolldown_ecmascript_utils::{ExpressionExt, JsxExt};
 use rustc_hash::FxHashSet;
 
 use super::ScopeHoistingFinalizer;
@@ -17,10 +17,10 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
   #[allow(clippy::too_many_lines)]
   fn visit_program(&mut self, program: &mut ast::Program<'ast>) {
     // Drop the hashbang since we already store them in ast_scan phase and
-    // we don't want oxc to generate hashbang statement in module level since we already handle
+    // we don't want oxc to generate hashbang statement and directives in module level since we already handle
     // them in chunk level
     program.hashbang.take();
-
+    program.directives.clear();
     // init namespace_alias_symbol_id
     self.namespace_alias_symbol_id = self
       .ctx
@@ -61,13 +61,7 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
     // 3. hoisted_names
     // 4. wrapped module declaration
     let declaration_of_module_namespace_object = if is_namespace_referenced {
-      let stmts = self.generate_declaration_of_module_namespace_object();
-      if needs_wrapper {
-        stmts
-      } else {
-        program.body.splice(0..0, stmts);
-        vec![]
-      }
+      self.generate_declaration_of_module_namespace_object()
     } else {
       vec![]
     };
@@ -89,11 +83,14 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
         program.body.push(self.snippet.var_decl_stmt(canonical_name, self.snippet.void_zero()));
       }
     });
-    if self.ctx.runtime.id() != self.ctx.module.idx {
+
+    let hmr_header = if self.ctx.runtime.id() == self.ctx.module.idx {
+      vec![]
+    } else {
       // FIXME(hyf0): Module register relies on runtime module, this causes a runtime error for registering runtime module.
       // Let's skip it for now.
-      program.body.splice(0..0, self.generate_hmr_header());
-    }
+      self.generate_hmr_header()
+    };
     walk_mut::walk_program(self, program);
 
     if needs_wrapper {
@@ -108,9 +105,8 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
 
           let commonjs_ref_expr = self.finalized_expr_for_symbol_ref(commonjs_ref, false, None);
 
-          let var_init_stmts = self.generate_esm_namespace_in_cjs();
-
           let mut stmts_inside_closure = allocator::Vec::new_in(self.alloc);
+          stmts_inside_closure.extend(hmr_header);
           stmts_inside_closure.append(&mut program.body);
 
           program.body.push(self.snippet.commonjs_wrapper_stmt(
@@ -121,7 +117,6 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
             self.ctx.options.profiler_names,
             &self.ctx.module.stable_id,
           ));
-          program.body.extend(var_init_stmts);
         }
         WrapKind::Esm => {
           use ast::Statement;
@@ -163,6 +158,7 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
             }
           });
           program.body.extend(declaration_of_module_namespace_object);
+          program.body.extend(hmr_header);
           program.body.extend(fn_stmts);
           if !hoisted_names.is_empty() {
             let mut declarators = allocator::Vec::new_in(self.alloc);
@@ -200,7 +196,9 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
         WrapKind::None => {}
       }
     } else {
-      program.body.extend(declaration_of_module_namespace_object);
+      program
+        .body
+        .splice(0..0, declaration_of_module_namespace_object.into_iter().chain(hmr_header));
     }
   }
 
@@ -314,8 +312,55 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
         }
       }
     }
+    self.rewrite_import_meta_hot(expr);
 
     walk_mut::walk_expression(self, expr);
+  }
+
+  fn visit_jsx_element_name(&mut self, it: &mut ast::JSXElementName<'ast>) {
+    match it {
+      ast::JSXElementName::Identifier(ident) => {
+        walk_mut::walk_jsx_identifier(self, ident);
+      }
+      ast::JSXElementName::IdentifierReference(identifier_reference) => {
+        if let Some(new_expr) =
+          self.try_rewrite_identifier_reference_expr(identifier_reference, false)
+        {
+          match new_expr {
+            Expression::Identifier(ident_ref) => {
+              *it = ast::JSXElementName::IdentifierReference(ident_ref);
+            }
+            _ => {
+              unreachable!(
+                "Should always rewrite to Identifier for JsxElementName::IdentifierReference"
+              )
+            }
+          }
+        }
+      }
+      ast::JSXElementName::NamespacedName(jsx_namespace_name) => {
+        walk_mut::walk_jsx_namespaced_name(self, jsx_namespace_name);
+      }
+      ast::JSXElementName::MemberExpression(jsx_member_expression) => {
+        if let Some(ident) = jsx_member_expression.get_identifier() {
+          if let Some(new_expr) = self.try_rewrite_identifier_reference_expr(ident, false) {
+            match new_expr {
+              Expression::Identifier(ident_ref) => {
+                jsx_member_expression.object.rewrite_ident_reference(ident_ref);
+              }
+              _ => {
+                unreachable!(
+                  "Should always rewrite to Identifier for JsxMemberExpression::get_identifier()"
+                )
+              }
+            }
+          }
+        }
+      }
+      ast::JSXElementName::ThisExpression(this_expression) => {
+        walk_mut::walk_this_expression(self, this_expression);
+      }
+    }
   }
 
   // foo.js `export const bar = { a: 0 }`
@@ -367,7 +412,7 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
   fn visit_import_expression(&mut self, expr: &mut ast::ImportExpression<'ast>) {
     if expr.options.is_none() {
       // Make sure the import expression is in correct form. If it's not, we should leave it as it is.
-      if let ast::Expression::StringLiteral(str) = &mut expr.source {
+      if let Some(str) = expr.source.as_static_module_request() {
         let rec_id = self.ctx.module.imports[&expr.span];
         let rec = &self.ctx.module.import_records[rec_id];
         let importee_id = rec.resolved_module;
@@ -378,13 +423,16 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
             let importee_chunk = &self.ctx.chunk_graph.chunk_table[importee_chunk_id];
 
             let import_path = importer_chunk.import_path_for(importee_chunk);
-
-            str.value = self.snippet.atom(&import_path);
+            expr.source = Expression::StringLiteral(
+              self.snippet.alloc_string_literal(&import_path, expr.source.span()),
+            );
           }
           Module::External(importee) => {
             let import_path = importee.get_import_path(importer_chunk);
-            if str.value != import_path {
-              str.value = self.snippet.atom(&import_path);
+            if str != import_path {
+              expr.source = Expression::StringLiteral(
+                self.snippet.alloc_string_literal(&import_path, expr.source.span()),
+              );
             }
           }
         }

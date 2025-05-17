@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use oxc_index::IndexVec;
 use rolldown_common::{
-  EcmaViewMeta, IndexModules, Module, ModuleIdx, ModuleType, NormalModule,
+  EcmaViewMeta, ExportsKind, IndexModules, Module, ModuleIdx, ModuleType, NormalModule,
   NormalizedBundlerOptions, StmtInfoIdx, SymbolOrMemberExprRef, SymbolRef, SymbolRefDb,
   side_effects::DeterminedSideEffects,
 };
@@ -85,6 +85,14 @@ impl LinkStage<'_> {
       is_included_vec[module.idx].iter_enumerated().for_each(|(stmt_info_id, is_included)| {
         module.stmt_infos.get_mut(stmt_info_id).is_included = *is_included;
       });
+
+      // The hmr need to create module namespace object to store exports.
+      if self.options.is_hmr_enabled()
+        && module.idx != self.runtime.id()
+        && matches!(module.exports_kind, ExportsKind::Esm)
+      {
+        module.stmt_infos.get_mut(StmtInfoIdx::new(0)).is_included = true;
+      }
     });
 
     tracing::trace!(
@@ -128,16 +136,8 @@ fn include_module(ctx: &mut Context, module: &NormalModule) {
   } else {
     // Skip the first statement, which is the namespace object. It should be included only if it is used no matter
     // tree shaking is enabled or not.
-    module.stmt_infos.iter_enumerated().skip(1).for_each(|(stmt_info_id, stmt_info)| {
-      if stmt_info.force_tree_shaking {
-        if stmt_info.side_effect {
-          // If `force_tree_shaking` is true, the statement should be included either by itself due to having side effects
-          // or by other statements referencing it.
-          include_statement(ctx, module, stmt_info_id);
-        }
-      } else {
-        include_statement(ctx, module, stmt_info_id);
-      }
+    module.stmt_infos.iter_enumerated().skip(1).for_each(|(stmt_info_id, _)| {
+      include_statement(ctx, module, stmt_info_id);
     });
   }
 

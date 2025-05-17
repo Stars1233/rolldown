@@ -15,7 +15,6 @@ var all_the_stuff = __toESM(require("./foo"));
 ```
 ### rolldown
 ```js
-"use strict";
 
 const foo = __toESM(require("./foo"));
 
@@ -25,7 +24,7 @@ Object.defineProperty(exports, 'all the stuff', {
     return foo;
   }
 });
-exports["some export"] = foo["some import"]
+exports["some export"] = foo["some import"];
 ```
 ### diff
 ```diff

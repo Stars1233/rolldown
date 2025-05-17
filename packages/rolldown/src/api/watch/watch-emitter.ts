@@ -1,4 +1,4 @@
-import { BindingWatcherEvent } from '../../binding';
+import { BindingWatcherEvent, Bundler } from '../../binding';
 import type { MaybePromise } from '../../types/utils';
 import { normalizeErrors } from '../../utils/error';
 
@@ -6,7 +6,10 @@ export type WatcherEvent = 'close' | 'event' | 'restart' | 'change';
 
 export type ChangeEvent = 'create' | 'update' | 'delete';
 
-export type RollupWatcherEvent =
+// TODO: find a way use `RolldownBuild` instead of `Bundler`.
+export type RolldownWatchBuild = Bundler;
+
+export type RolldownWatcherEvent =
   | { code: 'START' }
   | {
     code: 'BUNDLE_START'; /* input?: InputOption; output: readonly string[] */
@@ -16,13 +19,13 @@ export type RollupWatcherEvent =
     duration: number;
     // input?: InputOption
     output: readonly string[];
-    // result: RollupBuild
+    result: RolldownWatchBuild;
   }
   | { code: 'END' }
   | {
     code: 'ERROR';
-    error:
-      Error; /* the error is not compilable with rollup * /  /**  result: RollupBuild | null **/
+    error: Error; /* the error is not compilable with rollup */
+    result: RolldownWatchBuild;
   };
 
 export class WatcherEmitter {
@@ -48,7 +51,7 @@ export class WatcherEmitter {
   ): this;
   on(
     event: 'event',
-    listener: (data: RollupWatcherEvent) => MaybePromise<void>,
+    listener: (data: RolldownWatcherEvent) => MaybePromise<void>,
   ): this;
   on(event: 'restart' | 'close', listener: () => MaybePromise<void>): this;
   on(
@@ -60,6 +63,18 @@ export class WatcherEmitter {
       listeners.push(listener);
     } else {
       this.listeners.set(event, [listener]);
+    }
+    return this;
+  }
+
+  off(
+    event: WatcherEvent,
+    listener: (...parameters: any[]) => MaybePromise<void>,
+  ): this {
+    const listeners = this.listeners.get(event);
+    if (listeners) {
+      const index = listeners.indexOf(listener);
+      if (index !== -1) listeners.splice(index, 1);
     }
     return this;
   }
@@ -80,19 +95,21 @@ export class WatcherEmitter {
             const code = event.bundleEventKind();
             switch (code) {
               case 'BUNDLE_END':
-                const { duration, output } = event.bundleEndData();
+                const { duration, output, result } = event.bundleEndData();
                 await listener({
                   code: 'BUNDLE_END',
                   duration,
                   output: [output], // rolldown doesn't support arraying configure output
+                  result,
                 });
                 break;
 
               case 'ERROR':
-                const errors = event.errors();
+                const data = event.bundleErrorData();
                 await listener({
                   code: 'ERROR',
-                  error: normalizeErrors(errors),
+                  error: normalizeErrors(data.error),
+                  result: data.result,
                 });
                 break;
 

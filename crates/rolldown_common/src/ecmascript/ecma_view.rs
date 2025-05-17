@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
   EcmaAstIdx, ExportsKind, HmrInfo, ImportRecordIdx, LocalExport, ModuleDefFormat, ModuleId,
-  ModuleIdx, NamedImport, ResolvedImportRecord, SourceMutation, StmtInfoIdx, StmtInfos, SymbolRef,
+  ModuleIdx, NamedImport, ResolvedImportRecord, SourceMutation, StmtInfos, SymbolRef,
   side_effects::DeterminedSideEffects, types::source_mutation::ArcSourceMutation,
 };
 
@@ -88,20 +88,14 @@ pub struct EcmaView {
   pub self_referenced_class_decl_symbol_ids: FxHashSet<SymbolId>,
   // the range of hashbang in source
   pub hashbang_range: Option<Span>,
+  pub directive_range: Vec<Span>,
   pub meta: EcmaViewMeta,
   pub mutations: Vec<ArcSourceMutation>,
   /// `Span` of `new URL('path', import.meta.url)` -> `ImportRecordIdx`
   pub new_url_references: FxHashMap<Span, ImportRecordIdx>,
   pub this_expr_replace_map: FxHashMap<Span, ThisExprReplaceKind>,
 
-  /// - Represents the `import_xxx` in `const import_xxx = __toESM(require_xxx());`
-  /// - Only exist when this module is a cjs module and get imported by static `import` statement.
-  pub esm_namespace_in_cjs: Option<EsmNamespaceInCjs>,
-
-  /// - Represents the `import_xxx` in `const import_xxx = __toESM(require_xxx(), 1);`
-  /// - Only exist when this module is a cjs module and get imported by static `import` statement.
-  pub esm_namespace_in_cjs_node_mode: Option<EsmNamespaceInCjs>,
-
+  pub hmr_hot_ref: Option<SymbolRef>,
   pub hmr_info: HmrInfo,
 }
 
@@ -130,10 +124,4 @@ impl SourceMutation for ImportMetaRolldownAssetReplacer {
     magic_string
       .replace_all("import.meta.__ROLLDOWN_ASSET_FILENAME", format!("\"{}\"", self.asset_filename));
   }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct EsmNamespaceInCjs {
-  pub namespace_ref: SymbolRef,
-  pub stmt_info_idx: StmtInfoIdx,
 }

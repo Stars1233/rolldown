@@ -12,7 +12,6 @@ use rolldown_common::{
 };
 use rolldown_error::{AmbiguousExternalNamespaceModule, BuildDiagnostic};
 use rolldown_rstr::{Rstr, ToRstr};
-use rolldown_std_utils::OptionExt;
 use rolldown_utils::{
   ecmascript::{is_validate_identifier_name, legitimize_identifier_name},
   index_vec_ext::IndexVecExt,
@@ -560,7 +559,8 @@ impl BindImportsAndExportsContext<'_> {
               let named_export = &owner.named_exports[name];
               exporter.push(AmbiguousExternalNamespaceModule {
                 source: owner.source.clone(),
-                filename: owner.stable_id.to_string(),
+                module_id: owner.id.to_string(),
+                stable_id: owner.stable_id.to_string(),
                 span_of_identifier: named_export.span,
               });
             }
@@ -572,7 +572,8 @@ impl BindImportsAndExportsContext<'_> {
               let named_export = &normal_module.named_exports[name];
               return Some(AmbiguousExternalNamespaceModule {
                 source: normal_module.source.clone(),
-                filename: normal_module.stable_id.to_string(),
+                module_id: normal_module.id.to_string(),
+                stable_id: normal_module.stable_id.to_string(),
                 span_of_identifier: named_export.span,
               });
             }
@@ -585,7 +586,8 @@ impl BindImportsAndExportsContext<'_> {
             importee,
             AmbiguousExternalNamespaceModule {
               source: module.source.clone(),
-              filename: module.stable_id.to_string(),
+              module_id: module.id.to_string(),
+              stable_id: module.stable_id.to_string(),
               span_of_identifier: named_import.span_imported,
             },
             exporter,
@@ -611,6 +613,7 @@ impl BindImportsAndExportsContext<'_> {
         MatchImportKind::NoMatch => {
           let importee = &self.index_modules[rec.resolved_module];
           let mut diagnostic = BuildDiagnostic::missing_export(
+            module.id.to_string(),
             module.stable_id.to_string(),
             importee.stable_id().to_string(),
             module.source.clone(),
@@ -716,23 +719,17 @@ impl BindImportsAndExportsContext<'_> {
       let importer = &self.index_modules[tracker.importer];
       let named_import = &importer.as_normal().unwrap().named_imports[&tracker.imported_as];
       let importer_record = &importer.as_normal().unwrap().import_records[named_import.record_id];
-      let importee = &self.index_modules[importer_record.resolved_module];
 
       let kind = match import_status {
-        ImportStatus::CommonJS => {
-          let esm_namespace = if importer.as_normal().unpack().should_consider_node_esm_spec() {
-            importee.as_normal().unpack().esm_namespace_in_cjs_node_mode.unpack_ref().namespace_ref
-          } else {
-            importee.as_normal().unpack().esm_namespace_in_cjs.unpack_ref().namespace_ref
-          };
-          match &tracker.imported {
-            Specifier::Star => MatchImportKind::Namespace { namespace_ref: esm_namespace },
-            Specifier::Literal(alias) => MatchImportKind::NormalAndNamespace {
-              namespace_ref: esm_namespace,
-              alias: alias.clone(),
-            },
+        ImportStatus::CommonJS => match &tracker.imported {
+          Specifier::Star => {
+            MatchImportKind::Namespace { namespace_ref: importer_record.namespace_ref }
           }
-        }
+          Specifier::Literal(alias) => MatchImportKind::NormalAndNamespace {
+            namespace_ref: importer_record.namespace_ref,
+            alias: alias.clone(),
+          },
+        },
         ImportStatus::DynamicFallback { namespace_ref } => match &tracker.imported {
           Specifier::Star => MatchImportKind::Namespace { namespace_ref },
           Specifier::Literal(alias) => {

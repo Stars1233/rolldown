@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-  CallablePlugin, ResolveOptionsExternal,
+  ResolveOptionsExternal,
   builtin::{BuiltinChecker, is_node_like_builtin},
   external::{self, ExternalDecider, ExternalDeciderOptions},
   file_url::file_url_str_to_path_and_postfix,
@@ -22,9 +22,8 @@ use anyhow::anyhow;
 use derive_more::Debug;
 use rolldown_common::{ImportKind, WatcherChangeKind, side_effects::HookSideEffects};
 use rolldown_plugin::{
-  HookLoadArgs, HookLoadOutput, HookLoadReturn, HookNoopReturn, HookResolveIdArgs,
-  HookResolveIdOutput, HookResolveIdReturn, HookUsage, Plugin, PluginContext,
-  typedmap::TypedMapKey,
+  HookLoadArgs, HookLoadOutput, HookLoadReturn, HookResolveIdArgs, HookResolveIdOutput,
+  HookResolveIdReturn, HookUsage, Plugin, PluginContext, typedmap::TypedMapKey,
 };
 use rolldown_utils::pattern_filter::StringOrRegex;
 use rustc_hash::FxHashSet;
@@ -148,12 +147,18 @@ impl ViteResolvePlugin {
       resolve_options: options.resolve_options,
     }
   }
+}
 
-  fn name_internal(&self) -> &'static str {
-    "rolldown:vite-resolve"
+impl Plugin for ViteResolvePlugin {
+  fn name(&self) -> Cow<'static, str> {
+    Cow::Borrowed("rolldown:vite-resolve")
   }
 
-  async fn resolve_id_internal(&self, args: &HookResolveIdArgs<'_>) -> HookResolveIdReturn {
+  async fn resolve_id(
+    &self,
+    _ctx: &PluginContext,
+    args: &HookResolveIdArgs<'_>,
+  ) -> HookResolveIdReturn {
     let scan =
       args.custom.get(&ResolveIdOptionsScan {}).is_some_and(|v| *v) || self.resolve_options.scan;
 
@@ -311,7 +316,7 @@ impl ViteResolvePlugin {
 
     let base_dir = args
       .importer
-      .map(|i| Path::new(i).parent().map(|i| i.to_str().unwrap()).unwrap_or(i))
+      .map(|i| Path::new(i).parent().and_then(|p| p.to_str()).unwrap_or(i))
       .unwrap_or(&self.resolve_options.root);
     let resolved = resolver.normalize_oxc_resolver_result(
       args.importer,
@@ -332,7 +337,7 @@ impl ViteResolvePlugin {
     Ok(None)
   }
 
-  async fn load_internal(&self, args: &HookLoadArgs<'_>) -> HookLoadReturn {
+  async fn load(&self, _ctx: &PluginContext, args: &HookLoadArgs<'_>) -> HookLoadReturn {
     if let Some(id_without_prefix) = args.id.strip_prefix(BROWSER_EXTERNAL_ID) {
       if self.resolve_options.is_build {
         if self.resolve_options.is_production {
@@ -382,6 +387,7 @@ impl ViteResolvePlugin {
         let [_, peer_dep, parent_dep, _] = args.id.splitn(4, ":").collect::<Vec<&str>>()[..] else {
           unreachable!()
         };
+
         return Ok(Some(HookLoadOutput {
           code: get_development_optional_peer_dep_module_code(peer_dep, parent_dep),
           ..Default::default()
@@ -392,7 +398,12 @@ impl ViteResolvePlugin {
     Ok(None)
   }
 
-  fn watch_change_internal(&self, _path: &str, event: WatcherChangeKind) -> HookNoopReturn {
+  async fn watch_change(
+    &self,
+    _ctx: &PluginContext,
+    _path: &str,
+    event: WatcherChangeKind,
+  ) -> rolldown_plugin::HookNoopReturn {
     // TODO(sapphi-red): we need to avoid using cache for files not watched by vite or rollup
     // https://github.com/vitejs/vite/issues/17760
     match event {
@@ -402,51 +413,6 @@ impl ViteResolvePlugin {
       WatcherChangeKind::Update => {}
     };
     Ok(())
-  }
-}
-
-impl CallablePlugin for ViteResolvePlugin {
-  fn name(&self) -> Cow<'static, str> {
-    self.name_internal().into()
-  }
-
-  async fn resolve_id(&self, args: &HookResolveIdArgs<'_>) -> HookResolveIdReturn {
-    self.resolve_id_internal(args).await
-  }
-
-  async fn load(&self, args: &HookLoadArgs<'_>) -> HookLoadReturn {
-    self.load_internal(args).await
-  }
-
-  async fn watch_change(&self, path: &str, event: WatcherChangeKind) -> HookNoopReturn {
-    self.watch_change_internal(path, event)
-  }
-}
-
-impl Plugin for ViteResolvePlugin {
-  fn name(&self) -> Cow<'static, str> {
-    self.name_internal().into()
-  }
-
-  async fn resolve_id(
-    &self,
-    _ctx: &PluginContext,
-    args: &HookResolveIdArgs<'_>,
-  ) -> HookResolveIdReturn {
-    self.resolve_id_internal(args).await
-  }
-
-  async fn load(&self, _ctx: &PluginContext, args: &HookLoadArgs<'_>) -> HookLoadReturn {
-    self.load_internal(args).await
-  }
-
-  async fn watch_change(
-    &self,
-    _ctx: &PluginContext,
-    path: &str,
-    event: WatcherChangeKind,
-  ) -> rolldown_plugin::HookNoopReturn {
-    self.watch_change_internal(path, event)
   }
 
   fn register_hook_usage(&self) -> HookUsage {

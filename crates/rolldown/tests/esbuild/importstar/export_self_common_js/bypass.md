@@ -14,13 +14,12 @@ var foo = 123;
 ```
 ### rolldown
 ```js
-"use strict";
 
 //#region entry.js
 const foo = 123;
 
 //#endregion
-exports.foo = foo
+exports.foo = foo;
 ```
 ### diff
 ```diff

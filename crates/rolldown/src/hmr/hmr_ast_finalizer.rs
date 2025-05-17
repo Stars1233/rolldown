@@ -2,19 +2,22 @@ use oxc::{
   allocator::{Allocator, Box as ArenaBox, Dummy, IntoIn, TakeIn},
   ast::{
     NONE,
-    ast::{self, ExportDefaultDeclarationKind, Expression, ObjectPropertyKind},
+    ast::{
+      self, ExportDefaultDeclarationKind, Expression, ObjectExpression, ObjectPropertyKind,
+      PropertyKind, Statement,
+    },
   },
   ast_visit::{VisitMut, walk_mut},
   semantic::{Scoping, SymbolId},
-  span::SPAN,
+  span::{SPAN, Span},
 };
 
 use rolldown_common::{IndexModules, Module, ModuleIdx, NormalModule};
 use rolldown_ecmascript_utils::{
-  AstSnippet, BindingIdentifierExt, ExpressionExt, quote_stmt, quote_stmts,
+  AstSnippet, BindingIdentifierExt, ExpressionExt, quote_expr, quote_stmts,
 };
 use rolldown_utils::indexmap::FxIndexSet;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub struct HmrAstFinalizer<'me, 'ast> {
   // Outside input
@@ -28,90 +31,64 @@ pub struct HmrAstFinalizer<'me, 'ast> {
   pub import_binding: FxHashMap<SymbolId, String>,
   pub exports: oxc::allocator::Vec<'ast, ObjectPropertyKind<'ast>>,
   pub dependencies: FxIndexSet<ModuleIdx>,
+  pub imports: FxHashSet<ModuleIdx>,
 }
 
 impl<'ast> HmrAstFinalizer<'_, 'ast> {
-  pub fn generate_hmr_header(&mut self) -> Vec<ast::Statement<'ast>> {
-    let mut ret = vec![];
-
-    // `import.meta.hot = __rolldown_runtime__.createModuleHotContext(moduleId);`
-    ret.push(self.generate_stmt_of_init_module_hot_context());
-
-    ret.extend(self.generate_runtime_module_register_for_hmr());
-
-    ret
-  }
-
-  pub fn generate_stmt_of_init_module_hot_context(&self) -> ast::Statement<'ast> {
-    // import.meta.hot = __rolldown_runtime__.createModuleHotContext(moduleId);
-    let stmt = quote_stmt(
-      self.alloc,
-      &format!(
-        "import.meta.hot = __rolldown_runtime__.createModuleHotContext({:?});",
-        self.module.stable_id
-      ),
-    );
-    stmt
-  }
-
   pub fn generate_runtime_module_register_for_hmr(&mut self) -> Vec<ast::Statement<'ast>> {
     let mut ret = vec![];
 
-    let module_exports = match self.module.exports_kind {
-      rolldown_common::ExportsKind::Esm => {
-        // TODO: Still we could reuse use module namespace def
+    let module_exports =
+      match self.module.exports_kind {
+        rolldown_common::ExportsKind::Esm => {
+          let binding_name_for_namespace_object_ref = format!("ns_{}", self.module.repr_name);
 
-        let arg_obj_expr = self.snippet.builder.alloc_object_expression(
-          SPAN,
-          self.snippet.builder.vec_from_iter(self.exports.drain(..)),
-        );
-        ast::Argument::ObjectExpression(arg_obj_expr)
-      }
-      rolldown_common::ExportsKind::CommonJs => {
-        // `module.exports`
-        ast::Argument::StaticMemberExpression(self.snippet.builder.alloc_static_member_expression(
-          SPAN,
-          self.snippet.id_ref_expr("module", SPAN),
-          self.snippet.id_name("exports", SPAN),
-          false,
-        ))
-      }
-      rolldown_common::ExportsKind::None => ast::Argument::ObjectExpression(
-        // `{}`
-        self.snippet.builder.alloc_object_expression(SPAN, self.snippet.builder.vec()),
-      ),
-    };
+          ret.extend(self.generate_declaration_of_module_namespace_object(
+            &binding_name_for_namespace_object_ref,
+          ));
+          // Add __esModule flag
+          ret.push(self.snippet.builder.statement_expression(
+            SPAN,
+            self.snippet.call_expr_with_arg_expr(
+              self.snippet.id_ref_expr("__rolldown_runtime__.__toCommonJS", SPAN),
+              self.snippet.id_ref_expr(&binding_name_for_namespace_object_ref, SPAN),
+              false,
+            ),
+          ));
 
-    // __rolldown_runtime__.register(moduleId, module)
-    let mut arguments = self.snippet.builder.vec_from_array([
+          // { exports: namespace }
+          ast::Argument::ObjectExpression(self.snippet.builder.alloc_object_expression(
+            SPAN,
+            self.snippet.builder.vec1(self.snippet.builder.object_property_kind_object_property(
+              SPAN,
+              PropertyKind::Init,
+              self.snippet.builder.property_key_static_identifier(SPAN, "exports"),
+              self.snippet.id_ref_expr(&binding_name_for_namespace_object_ref, SPAN),
+              true,
+              false,
+              false,
+            )),
+          ))
+        }
+        rolldown_common::ExportsKind::CommonJs => {
+          // `module`
+          ast::Argument::Identifier(self.snippet.builder.alloc_identifier_reference(SPAN, "module"))
+        }
+        rolldown_common::ExportsKind::None => ast::Argument::ObjectExpression(
+          // `{}`
+          self.snippet.builder.alloc_object_expression(SPAN, self.snippet.builder.vec()),
+        ),
+      };
+
+    // __rolldown_runtime__.registerModule(moduleId, module)
+    let arguments = self.snippet.builder.vec_from_array([
       ast::Argument::StringLiteral(self.snippet.builder.alloc_string_literal(
         SPAN,
-        &self.module.stable_id,
+        self.snippet.builder.atom(&self.module.stable_id),
         None,
       )),
       module_exports,
     ]);
-
-    if self.module.exports_kind.is_commonjs() {
-      // __rolldown_runtime__.register(moduleId, module, { cjs: true })
-      arguments.push(ast::Argument::ObjectExpression(
-        self.snippet.builder.alloc_object_expression(
-          SPAN,
-          self.snippet.builder.vec1(ast::ObjectPropertyKind::ObjectProperty(
-            ast::ObjectProperty {
-              key: ast::PropertyKey::StaticIdentifier(
-                self.snippet.id_name("cjs", SPAN).into_in(self.alloc),
-              ),
-              value: ast::Expression::BooleanLiteral(
-                self.snippet.builder.alloc_boolean_literal(SPAN, true),
-              ),
-              ..ast::ObjectProperty::dummy(self.alloc)
-            }
-            .into_in(self.alloc),
-          )),
-        ),
-      ));
-    }
 
     let register_call = self.snippet.builder.alloc_call_expression(
       SPAN,
@@ -165,6 +142,82 @@ impl<'ast> HmrAstFinalizer<'_, 'ast> {
       _ => {}
     }
   }
+
+  pub fn rewrite_import_meta_hot(&self, expr: &mut ast::Expression<'ast>) {
+    if expr.is_import_meta_hot() {
+      let hot_name = format!("hot_{}", self.module.repr_name);
+      *expr = self.snippet.id_ref_expr(&hot_name, SPAN);
+    }
+  }
+
+  fn create_binding_name(importee: &Module) -> String {
+    format!("import_{}", importee.repr_name())
+  }
+
+  fn create_load_exports_call_stmt(
+    &mut self,
+    importee: &Module,
+    binding_name: &str,
+    span: Span,
+  ) -> Option<Statement<'ast>> {
+    if self.imports.contains(&importee.idx()) {
+      return None;
+    }
+    self.imports.insert(importee.idx());
+
+    let id = &importee.stable_id();
+    let interop = match importee {
+      Module::Normal(importee) => self.module.interop(importee),
+      Module::External(_) => None,
+    };
+    let call_expr =
+      quote_expr(self.alloc, format!("__rolldown_runtime__.loadExports({id:?});",).as_str());
+
+    let stmt = self.snippet.variable_declarator_require_call_stmt(
+      binding_name,
+      self.snippet.to_esm_call_with_interop("__rolldown_runtime__.__toESM", call_expr, interop),
+      span,
+    );
+    Some(stmt)
+  }
+
+  fn generate_declaration_of_module_namespace_object(
+    &mut self,
+    binding_name_for_namespace_object_ref: &str,
+  ) -> Vec<ast::Statement<'ast>> {
+    // construct `var [binding_name_for_namespace_object_ref] = {}`
+    let decl_stmt = self.snippet.var_decl_stmt(
+      binding_name_for_namespace_object_ref,
+      ast::Expression::ObjectExpression(ArenaBox::new_in(
+        ObjectExpression::dummy(self.alloc),
+        self.alloc,
+      )),
+    );
+
+    // TODO reexport external module
+
+    // construct `{ prop_name: () => returned, ... }`
+    let mut arg_obj_expr = self
+      .snippet
+      .builder
+      .alloc_object_expression(SPAN, self.snippet.builder.vec_with_capacity(self.exports.len()));
+    arg_obj_expr.properties.extend(self.exports.drain(..));
+
+    // construct `__export(ns_name, { prop_name: () => returned, ... })`
+    let export_call_expr = self.snippet.builder.expression_call(
+      SPAN,
+      self.snippet.id_ref_expr("__rolldown_runtime__.__export", SPAN),
+      NONE,
+      self.snippet.builder.vec_from_array([
+        ast::Argument::from(self.snippet.id_ref_expr(binding_name_for_namespace_object_ref, SPAN)),
+        ast::Argument::ObjectExpression(arg_obj_expr.into_in(self.alloc)),
+      ]),
+      false,
+    );
+    let export_call_stmt = self.snippet.builder.statement_expression(SPAN, export_call_expr);
+
+    vec![decl_stmt, export_call_stmt]
+  }
 }
 
 impl<'ast> VisitMut<'ast> for HmrAstFinalizer<'_, 'ast> {
@@ -184,13 +237,17 @@ impl<'ast> VisitMut<'ast> for HmrAstFinalizer<'_, 'ast> {
 
     let dependencies_init_fn_stmts = quote_stmts(self.alloc, dependencies_init_fns.as_str());
 
-    let dev_runtime_head = self.generate_hmr_header();
+    let runtime_module_register = self.generate_runtime_module_register_for_hmr();
 
-    try_block
-      .body
-      .reserve_exact(dev_runtime_head.len() + it.body.len() + dependencies_init_fn_stmts.len());
-    try_block.body.extend(dev_runtime_head);
+    try_block.body.reserve_exact(
+      runtime_module_register.len() + it.body.len() + dependencies_init_fn_stmts.len() + 1 /* import.meta.hot*/,
+    );
+    try_block.body.extend(runtime_module_register);
     try_block.body.extend(dependencies_init_fn_stmts);
+    try_block.body.push(self.snippet.stmt_of_init_module_hot_context(
+      &format!("hot_{}", self.module.repr_name),
+      &self.module.stable_id,
+    ));
     try_block.body.extend(it.body.take_in(self.alloc));
 
     let final_block = self.snippet.builder.alloc_block_statement(SPAN, self.snippet.builder.vec());
@@ -229,25 +286,30 @@ impl<'ast> VisitMut<'ast> for HmrAstFinalizer<'_, 'ast> {
     let var_decl = self.snippet.builder.alloc_variable_declaration(
       SPAN,
       ast::VariableDeclarationKind::Var,
-      self.snippet.builder.vec1(self.snippet.builder.variable_declarator(
-        SPAN,
-        ast::VariableDeclarationKind::Var,
-        self.snippet.builder.binding_pattern(
-          ast::BindingPatternKind::BindingIdentifier(
-            self.snippet.builder.alloc_binding_identifier(SPAN, init_fn_name),
+      self.snippet.builder.vec1(
+        self.snippet.builder.variable_declarator(
+          SPAN,
+          ast::VariableDeclarationKind::Var,
+          self.snippet.builder.binding_pattern(
+            ast::BindingPatternKind::BindingIdentifier(
+              self
+                .snippet
+                .builder
+                .alloc_binding_identifier(SPAN, self.snippet.builder.atom(init_fn_name)),
+            ),
+            NONE,
+            false,
           ),
-          NONE,
+          Some(ast::Expression::CallExpression(self.snippet.builder.alloc_call_expression(
+            SPAN,
+            self.snippet.id_ref_expr("__rolldown_runtime__.createEsmInitializer", SPAN),
+            NONE,
+            self.snippet.builder.vec1(ast::Argument::from(user_code_wrapper)),
+            false,
+          ))),
           false,
         ),
-        Some(ast::Expression::CallExpression(self.snippet.builder.alloc_call_expression(
-          SPAN,
-          self.snippet.id_ref_expr("__rolldown_runtime__.createEsmInitializer", SPAN),
-          NONE,
-          self.snippet.builder.vec1(ast::Argument::from(user_code_wrapper)),
-          false,
-        ))),
-        false,
-      )),
+      ),
       false,
     );
 
@@ -271,47 +333,41 @@ impl<'ast> VisitMut<'ast> for HmrAstFinalizer<'_, 'ast> {
           // ```
           let rec_id = self.module.imports[&import_decl.span];
           let rec = &self.module.import_records[rec_id];
-          match &self.modules[rec.resolved_module] {
-            Module::Normal(importee) => {
-              self.dependencies.insert(rec.resolved_module);
-              let id = &importee.stable_id;
-              let binding_name = format!("import_{}", importee.repr_name);
-              let stmt = quote_stmt(
-                self.alloc,
-                format!("const {binding_name} = __rolldown_runtime__.loadExports({id:?});",)
-                  .as_str(),
-              );
-              import_decl.specifiers.as_ref().inspect(|specifiers| {
-                specifiers.iter().for_each(|spec| match spec {
-                  ast::ImportDeclarationSpecifier::ImportSpecifier(import_specifier) => {
-                    self.import_binding.insert(
-                      import_specifier.local.expect_symbol_id(),
-                      format!("{binding_name}.{}", import_specifier.imported.name()),
-                    );
-                  }
-                  ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(
-                    import_default_specifier,
-                  ) => {
-                    self.import_binding.insert(
-                      import_default_specifier.local.expect_symbol_id(),
-                      format!("{binding_name}.default"),
-                    );
-                  }
-                  ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(
-                    import_namespace_specifier,
-                  ) => {
-                    self.import_binding.insert(
-                      import_namespace_specifier.local.expect_symbol_id(),
-                      binding_name.to_string(),
-                    );
-                  }
-                });
-              });
-              *node = stmt;
-            }
-            Module::External(_importee) => {
-              todo!("handle external module");
-            }
+          let importee = &self.modules[rec.resolved_module];
+          self.dependencies.insert(rec.resolved_module);
+
+          let binding_name = Self::create_binding_name(importee);
+          import_decl.specifiers.as_ref().inspect(|specifiers| {
+            specifiers.iter().for_each(|spec| match spec {
+              ast::ImportDeclarationSpecifier::ImportSpecifier(import_specifier) => {
+                self.import_binding.insert(
+                  import_specifier.local.expect_symbol_id(),
+                  format!("{binding_name}.{}", import_specifier.imported.name()),
+                );
+              }
+              ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(import_default_specifier) => {
+                self.import_binding.insert(
+                  import_default_specifier.local.expect_symbol_id(),
+                  format!("{binding_name}.default"),
+                );
+              }
+              ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(
+                import_namespace_specifier,
+              ) => {
+                self.import_binding.insert(
+                  import_namespace_specifier.local.expect_symbol_id(),
+                  binding_name.to_string(),
+                );
+              }
+            });
+          });
+          if let Some(stmt) =
+            self.create_load_exports_call_stmt(importee, &binding_name, import_decl.span)
+          {
+            *node = stmt;
+          } else {
+            *node =
+              ast::Statement::EmptyStatement(self.snippet.builder.alloc_empty_statement(SPAN));
           }
         }
         ast::ModuleDeclaration::ExportNamedDeclaration(decl) => {
@@ -319,58 +375,52 @@ impl<'ast> VisitMut<'ast> for HmrAstFinalizer<'_, 'ast> {
             // export {} from '...'
             let rec_id = self.module.imports[&decl.span];
             let rec = &self.module.import_records[rec_id];
+            let importee = &self.modules[rec.resolved_module];
             self.dependencies.insert(rec.resolved_module);
-            match &self.modules[rec.resolved_module] {
-              Module::Normal(importee) => {
-                self.dependencies.insert(rec.resolved_module);
-                let id = &importee.stable_id;
-                let binding_name = format!("import_{}", importee.repr_name);
-                let stmt = quote_stmt(
-                  self.alloc,
-                  format!("const {binding_name} = __rolldown_runtime__.loadExports({id:?});",)
-                    .as_str(),
-                );
-                self.exports.extend(decl.specifiers.iter().map(|specifier| {
-                  self.snippet.object_property_kind_object_property(
-                    &specifier.exported.name(),
-                    match &specifier.local {
-                      ast::ModuleExportName::IdentifierName(ident) => {
-                        Expression::StaticMemberExpression(
-                          self.snippet.builder.alloc_static_member_expression(
-                            SPAN,
-                            self.snippet.id_ref_expr(&binding_name, SPAN),
-                            self.snippet.builder.identifier_name(SPAN, ident.name.as_str()),
-                            false,
-                          ),
-                        )
-                      }
-                      ast::ModuleExportName::StringLiteral(str) => {
-                        Expression::ComputedMemberExpression(
-                          self.snippet.builder.alloc_computed_member_expression(
-                            SPAN,
-                            self.snippet.id_ref_expr(&binding_name, SPAN),
-                            self.snippet.builder.expression_string_literal(
-                              SPAN, str.value.as_str(), None
-                            ),
-                            false,
-                          ),
-                        )
-                      }
-                      ast::ModuleExportName::IdentifierReference(_) => {
-                        unreachable!(
-                          "ModuleExportName IdentifierReference is invalid in ExportNamedDeclaration with source"
-                        )
-                      }
-                    },
-                    matches!(specifier.exported, ast::ModuleExportName::StringLiteral(_))
-                  )
-                }));
 
-                *node = stmt;
-              }
-              Module::External(_importee) => {
-                todo!("handle external module");
-              }
+            let binding_name = Self::create_binding_name(importee);
+            self.exports.extend(decl.specifiers.iter().map(|specifier| {
+              self.snippet.object_property_kind_object_property(
+                &specifier.exported.name(),
+                match &specifier.local {
+                  ast::ModuleExportName::IdentifierName(ident) => {
+                    Expression::StaticMemberExpression(
+                      self.snippet.builder.alloc_static_member_expression(
+                        SPAN,
+                        self.snippet.id_ref_expr(&binding_name, SPAN),
+                        self.snippet.builder.identifier_name(SPAN, ident.name.as_str()),
+                        false,
+                      ),
+                    )
+                  }
+                  ast::ModuleExportName::StringLiteral(str) => {
+                    Expression::ComputedMemberExpression(
+                      self.snippet.builder.alloc_computed_member_expression(
+                        SPAN,
+                        self.snippet.id_ref_expr(&binding_name, SPAN),
+                        self.snippet.builder.expression_string_literal(
+                          SPAN, str.value.as_str(), None
+                        ),
+                        false,
+                      ),
+                    )
+                  }
+                  ast::ModuleExportName::IdentifierReference(_) => {
+                    unreachable!(
+                      "ModuleExportName IdentifierReference is invalid in ExportNamedDeclaration with source"
+                    )
+                  }
+                },
+                matches!(specifier.exported, ast::ModuleExportName::StringLiteral(_))
+              )
+            }));
+            if let Some(stmt) =
+              self.create_load_exports_call_stmt(importee, &binding_name, decl.span)
+            {
+              *node = stmt;
+            } else {
+              *node =
+                ast::Statement::EmptyStatement(self.snippet.builder.alloc_empty_statement(SPAN));
             }
           } else if let Some(decl) = &mut decl.declaration {
             match decl {
@@ -522,6 +572,8 @@ impl<'ast> VisitMut<'ast> for HmrAstFinalizer<'_, 'ast> {
         }
       }
     }
+
+    self.rewrite_import_meta_hot(it);
 
     walk_mut::walk_expression(self, it);
   }

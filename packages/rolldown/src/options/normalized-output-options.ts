@@ -44,9 +44,11 @@ export interface NormalizedOutputOptions {
   sourcemapIgnoreList: SourcemapIgnoreListOption;
   sourcemapPathTransform: SourcemapPathTransformOption | undefined;
   minify: false | BindingMinifyOptions;
-  comments: 'none' | 'preserve-legal';
+  legalComments: 'none' | 'inline';
   polyfillRequire: boolean;
   plugins: RolldownPlugin[];
+  preserveModules: boolean;
+  virtualDirname: string;
 }
 
 // TODO: I guess we make these getters enumerable so it act more like a plain object
@@ -165,8 +167,8 @@ export class NormalizedOutputOptionsImpl implements NormalizedOutputOptions {
     return this.inner.minify;
   }
 
-  get comments(): 'none' | 'preserve-legal' {
-    return this.inner.comments;
+  get legalComments(): 'none' | 'inline' {
+    return this.inner.legalComments;
   }
 
   get polyfillRequire(): boolean {
@@ -175,6 +177,14 @@ export class NormalizedOutputOptionsImpl implements NormalizedOutputOptions {
 
   get plugins(): RolldownPlugin[] {
     return this.normalizedOutputPlugins;
+  }
+
+  get preserveModules(): boolean {
+    return this.preserveModules;
+  }
+
+  get virtualDirname(): string {
+    return this.virtualDirname;
   }
 }
 

@@ -9,12 +9,11 @@ use std::{
 
 use crate::{Bundler, SharedOptions};
 
-use super::emitter::SharedWatcherEmitter;
+use super::{emitter::SharedWatcherEmitter, event::BundleErrorEventData};
+use crate::watch::event::{BundleEndEventData, BundleEvent, WatcherEvent};
 use arcstr::ArcStr;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use rolldown_common::{
-  BundleEndEventData, BundleEvent, OutputsDiagnostics, WatcherChangeKind, WatcherEvent,
-};
+use rolldown_common::{OutputsDiagnostics, WatcherChangeKind};
 use rolldown_error::{BuildDiagnostic, BuildResult, ResultExt};
 use rolldown_utils::{dashmap::FxDashSet, pattern_filter};
 use tokio::sync::Mutex;
@@ -56,6 +55,7 @@ impl WatcherTask {
 
     self.emitter.emit(WatcherEvent::Event(BundleEvent::BundleStart))?;
 
+    bundler.reset_closed();
     bundler.plugin_driver.clear();
 
     let result = {
@@ -92,12 +92,16 @@ impl WatcherTask {
             .to_string(),
           #[allow(clippy::cast_possible_truncation)]
           duration: start_time.elapsed().as_millis() as u32,
+          result: Arc::clone(&self.bundler),
         })))?;
       }
       Err(errs) => {
-        self.emitter.emit(WatcherEvent::Event(BundleEvent::Error(OutputsDiagnostics {
-          diagnostics: errs.into_vec(),
-          cwd: bundler.options.cwd.clone(),
+        self.emitter.emit(WatcherEvent::Event(BundleEvent::Error(BundleErrorEventData {
+          error: OutputsDiagnostics {
+            diagnostics: errs.into_vec(),
+            cwd: bundler.options.cwd.clone(),
+          },
+          result: Arc::clone(&self.bundler),
         })))?;
       }
     }
@@ -169,9 +173,12 @@ impl WatcherTask {
   pub async fn on_change(&self, path: &str, kind: WatcherChangeKind) {
     let bundler = self.bundler.lock().await;
     let _ = bundler.plugin_driver.watch_change(path, kind).await.map_err(|e| {
-      self.emitter.emit(WatcherEvent::Event(BundleEvent::Error(OutputsDiagnostics {
-        diagnostics: vec![BuildDiagnostic::unhandleable_error(e)],
-        cwd: bundler.options.cwd.clone(),
+      self.emitter.emit(WatcherEvent::Event(BundleEvent::Error(BundleErrorEventData {
+        error: OutputsDiagnostics {
+          diagnostics: vec![BuildDiagnostic::unhandleable_error(e)],
+          cwd: bundler.options.cwd.clone(),
+        },
+        result: Arc::clone(&self.bundler),
       })))
     });
   }

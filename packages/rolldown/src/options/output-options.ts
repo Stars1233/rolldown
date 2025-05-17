@@ -150,7 +150,7 @@ export interface OutputOptions {
        * - Type: `number`
        * - Default: `0`
        *
-       * Minimum size of the desired chunk. If accumulated size of captured modules is smaller than this value, this group will be ignored.s
+       * Minimum size of the desired chunk. If accumulated size of captured modules is smaller than this value, this group will be ignored.
        */
       minSize?: number;
       /**
@@ -187,13 +187,15 @@ export interface OutputOptions {
    * Control comments in the output.
    *
    * - `none`: no comments
-   * - `preserve-legal`: preserve comments that contain `@license`, `@preserve` or starts with `//!` `/*!`
+   * - `inline`: preserve comments that contain `@license`, `@preserve` or starts with `//!` `/*!`
    */
-  comments?: 'none' | 'preserve-legal';
+  legalComments?: 'none' | 'inline';
   plugins?: RolldownOutputPluginOption;
   polyfillRequire?: boolean;
-  target?: ESTarget;
+  target?: string | string[];
   hoistTransitiveImports?: false;
+  preserveModules?: boolean;
+  virtualDirname?: string;
 }
 
 interface OverwriteOutputOptionsForCli {

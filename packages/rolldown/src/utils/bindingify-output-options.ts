@@ -31,6 +31,9 @@ export function bindingifyOutputOptions(
     globals,
     file,
     sanitizeFileName,
+    preserveModules,
+    virtualDirname,
+    legalComments,
   } = outputOptions;
 
   return {
@@ -66,6 +69,9 @@ export function bindingifyOutputOptions(
     polyfillRequire: outputOptions.polyfillRequire,
     target: outputOptions.target,
     sanitizeFileName,
+    preserveModules,
+    virtualDirname,
+    legalComments,
   };
 }
 

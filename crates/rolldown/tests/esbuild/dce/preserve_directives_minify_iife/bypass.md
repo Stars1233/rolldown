@@ -19,13 +19,15 @@
 ```
 ### rolldown
 ```js
+'use 1';
+'use 2';
+'use 3';
+
+
 (function() {
 
 
 //#region entry.js
-"use 1";
-"use 2";
-"use 3";
 entry();
 
 //#endregion
@@ -41,10 +43,10 @@ entry();
 -"use 2";
 -"use 3";
 -(() => {
++'use 1';
++'use 2';
++'use 3';
 +(function () {
-+    "use 1";
-+    "use 2";
-+    "use 3";
      entry();
  })();
 

@@ -13,13 +13,12 @@ export default defineTest({
     expect(output.output[0].code).toMatchInlineSnapshot(`
       "var module = (function(exports) {
 
-      "use strict";
 
       //#region main.js
       const main = "main";
 
       //#endregion
-      exports.main = main
+      exports.main = main;
       return exports;
       })({});"
     `)

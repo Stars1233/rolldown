@@ -49,6 +49,7 @@ export type ModuleTypes = Record<
   | 'binary'
   | 'empty'
   | 'css'
+  | 'asset'
 >;
 
 export interface JsxOptions {
@@ -61,7 +62,7 @@ export interface JsxOptions {
   development?: boolean;
 }
 
-export interface WatchOptions {
+export interface WatcherOptions {
   skipWrite?: boolean;
   buildDelay?: number;
   notify?: {
@@ -223,7 +224,7 @@ export interface InputOptions {
    */
   jsx?: false | 'react' | 'react-jsx' | 'preserve' | JsxOptions;
   transform?: OxcTransformOption;
-  watch?: WatchOptions | false;
+  watch?: WatcherOptions | false;
   dropLabels?: string[];
   keepNames?: boolean;
   checks?: ChecksOptions;

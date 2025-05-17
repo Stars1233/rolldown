@@ -76,8 +76,18 @@ export class RolldownBuild {
     return this.#bundler?.bundler.generateHmrPatch(changedFiles);
   }
 
-  get watchFiles(): string[] {
-    return this.#bundler?.bundler.watchFiles ?? [];
+  async hmrInvalidate(
+    file: string,
+    firstInvalidatedBy?: string,
+  ): Promise<BindingHmrOutput | undefined> {
+    return this.#bundler?.bundler.hmrInvalidate(file, firstInvalidatedBy);
+  }
+
+  // TODO(underfin)
+  // The `watchFiles` method returns a promise, but Rollup does not.
+  // Converting it to a synchronous API might cause a deadlock if the user calls `write` and `watchFiles` simultaneously.
+  get watchFiles(): Promise<string[]> {
+    return this.#bundler?.bundler.getWatchFiles() ?? Promise.resolve([]);
   }
 }
 

@@ -15,7 +15,6 @@ var foo = 123;
 ```
 ### rolldown
 ```js
-"use strict";
 
 
 //#region entry.js
@@ -27,7 +26,7 @@ __export(entry_exports, {
 const foo = 123;
 
 //#endregion
-exports.foo = foo
+exports.foo = foo;
 Object.defineProperty(exports, 'ns', {
   enumerable: true,
   get: function () {

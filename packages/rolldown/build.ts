@@ -2,11 +2,13 @@ import colors from 'ansis';
 import { globSync } from 'glob';
 import fs from 'node:fs';
 import nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { dts } from 'rolldown-plugin-dts';
 import { build, BuildOptions, type Plugin } from './src/index';
 
 const isCI = !!process.env.CI;
 const isReleasingCI = !!process.env.RELEASING;
+const __dirname = nodePath.join(fileURLToPath(import.meta.url), '..');
 
 // In `@rolldown/browser`, there will be three builds:
 // - CJS and ESM for Node (used in StackBlitz / WebContainers)
@@ -63,8 +65,9 @@ if (isBrowserPkg) {
     withShared({
       browserBuild: true,
       output: {
+        dir: outputDir,
         format: 'esm',
-        file: nodePath.resolve(outputDir, 'browser.mjs'),
+        entryFileNames: '[name].browser.mjs',
       },
     }),
   );
@@ -85,12 +88,14 @@ function withShared(
   return {
     input: {
       index: './src/index',
+      'experimental-index': './src/experimental-index',
       ...!isBrowserBuild
         ? {
           cli: './src/cli/index',
+          config: './src/config',
           'parallel-plugin': './src/parallel-plugin',
           'parallel-plugin-worker': './src/parallel-plugin-worker',
-          'experimental-index': './src/experimental-index',
+          'filter-index': './src/filter-index',
           'parse-ast-index': './src/parse-ast-index',
         }
         : {},
@@ -104,8 +109,6 @@ function withShared(
       /rolldown-binding\..*\.wasm/,
       /@rolldown\/binding-.*/,
       /\.\/rolldown-binding\.wasi\.cjs/,
-      // some dependencies, e.g. zod, cannot be inlined because their types
-      // are used in public APIs
       ...Object.keys(pkgJson.dependencies ?? {}),
     ],
     define: {
@@ -158,15 +161,17 @@ function removeBuiltModules(): Plugin {
     name: 'remove-built-modules',
     resolveId: {
       filter: { id: /node:/ },
-      handler(id) {
+      handler(id, importer) {
         if (id === 'node:path') {
           return this.resolve('pathe');
         }
-        if (id === 'node:os' || id === 'node:worker_threads') {
+        if (
+          id === 'node:os' || id === 'node:worker_threads' || id === 'node:url'
+        ) {
           // conditional import
           return { id, external: true, moduleSideEffects: false };
         }
-        throw new Error(`Unresolved module: ${id}`);
+        throw new Error(`Unresolved module: ${id} from ${importer}`);
       },
     },
   };

@@ -8,13 +8,12 @@ source: crates/rolldown_testing/src/integration_test.rs
 ```js
 var module = (function(exports) {
 
-"use strict";
 
 //#region foo.js
 const value = 1;
 
 //#endregion
-exports.value = value
+exports.value = value;
 return exports;
 })({});
 ```

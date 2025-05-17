@@ -8,8 +8,10 @@
 ```
 ### rolldown
 ```js
+'use loose';
+
+
 //#region entry.js
-"use loose";
 a;
 b;
 
@@ -22,8 +24,9 @@ b;
 +++ rolldown	entry.js
 @@ -1,3 +1,3 @@
 -"use strict";
- "use loose";
+-"use loose";
 -(a, b);
++'use loose';
 +a;
 +b;
 

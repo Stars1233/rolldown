@@ -26,15 +26,14 @@ import assert from "node:assert";
 var require_foo = __commonJS({ "node_modules/pkg/foo.js"(exports, module) {
 	module.exports = 123;
 } });
+
+//#endregion
+//#region node_modules/pkg/index.js
 var import_foo = __toESM(require_foo());
 
 //#endregion
 //#region entry.js
-assert.equal(
-	// => const import_xxx = require_xxx
-	import_foo.default,
-	123
-);
+assert.equal(import_foo.default, 123);
 
 //#endregion
 ```

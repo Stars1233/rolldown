@@ -16,13 +16,12 @@ var foo = "foo";
 ```
 ### rolldown
 ```js
-"use strict";
 
 //#region foo.js
 let foo = "foo";
 
 //#endregion
-exports.foo = foo
+exports.foo = foo;
 ```
 ### diff
 ```diff

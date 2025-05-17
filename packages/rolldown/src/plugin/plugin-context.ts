@@ -1,7 +1,8 @@
 import type { Program } from '@oxc-project/types';
 import type { BindingPluginContext, ParserOptions } from '../binding';
 import { SYMBOL_FOR_RESOLVE_CALLER_THAT_SKIP_SELF } from '../constants/plugin-context';
-import { LOG_LEVEL_WARN } from '../log/logging';
+import type { LogHandler } from '../log/log-handler';
+import { LOG_LEVEL_WARN, type LogLevelOption } from '../log/logging';
 import { logCycleLoading } from '../log/logs';
 import type { OutputOptions } from '../options/output-options';
 import { parseAst } from '../parse-ast-index';
@@ -10,7 +11,6 @@ import {
   MinimalPluginContextImpl,
 } from '../plugin/minimal-plugin-context';
 import type { Extends, TypeAssert } from '../types/assert';
-import type { LogHandler, LogLevelOption } from '../types/misc';
 import type { ModuleInfo } from '../types/module-info';
 import type { PartialNull } from '../types/utils';
 import { type AssetSource, bindingAssetSource } from '../utils/asset-source';
@@ -126,31 +126,25 @@ export class PluginContextImpl extends MinimalPluginContextImpl {
       if (loadPromise) {
         return loadPromise;
       }
-      let resolveFn;
-      // TODO: If is not resolved, we need to set a time to avoid waiting.
       const promise = new Promise<void>((resolve, _) => {
-        resolveFn = resolve;
+        data.loadModulePromiseResolveFnMap.set(id, resolve);
       });
       data.loadModulePromiseMap.set(id, promise);
       try {
         await context.load(
           id,
           bindingifySideEffects(options.moduleSideEffects),
-          (_success) => {
-            // Here the bundler will give an error for it, so here avoid give other error again, it could be is confusing.
-            // TODO: It maybe could be improved in the future.
-            resolveFn!();
-          },
         );
       } catch (e) {
         // If the load module has failed, avoid it re-load using unresolved promise.
         data.loadModulePromiseMap.delete(id);
+        data.loadModulePromiseResolveFnMap.delete(id);
         throw e;
       }
       return promise;
     }
 
-    // Here using one promise to avoid pass more callback to rust side, it only accept one callback, other will be ignored.
+    // avoid one module load twice at concurrent.
     await createLoadModulePromise(this.context, this.data);
     return this.data.getModuleInfo(id, this.context)!;
   }

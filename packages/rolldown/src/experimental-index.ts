@@ -1,10 +1,21 @@
 export { experimental_scan as scan } from './api/experimental';
-export { moduleRunnerTransform, transform } from './binding';
-export type { TransformOptions, TransformResult } from './binding';
+export {
+  isolatedDeclaration,
+  type IsolatedDeclarationsOptions,
+  type IsolatedDeclarationsResult,
+  moduleRunnerTransform,
+  type NapiResolveOptions as ResolveOptions,
+  type ResolveResult,
+  ResolverFactory,
+  transform,
+  type TransformOptions,
+  type TransformResult,
+} from './binding';
 export { defineParallelPlugin } from './plugin/parallel-plugin';
 export { composeJsPlugins as composePlugins } from './utils/compose-js-plugins';
 // Builtin plugin factory
 export {
+  assetPlugin,
   buildImportAnalysisPlugin,
   dynamicImportVarsPlugin,
   importGlobPlugin,

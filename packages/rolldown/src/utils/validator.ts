@@ -49,6 +49,7 @@ const ExternalSchema = v.union([
 const ModuleTypesSchema = v.record(
   v.string(),
   v.union([
+    v.literal('asset'),
     v.literal('base64'),
     v.literal('binary'),
     v.literal('css'),
@@ -454,21 +455,6 @@ const InputCliOptionsSchema = v.omit(
 
 /// --- OutputSchema ---
 
-enum ESTarget {
-  ES6 = 'es6',
-  ES2015 = 'es2015',
-  ES2016 = 'es2016',
-  ES2017 = 'es2017',
-  ES2018 = 'es2018',
-  ES2019 = 'es2019',
-  ES2020 = 'es2020',
-  ES2021 = 'es2021',
-  ES2022 = 'es2022',
-  ES2023 = 'es2023',
-  ES2024 = 'es2024',
-  ESNext = 'esnext',
-}
-
 const ModuleFormatSchema = v.union([
   v.literal('es'),
   v.literal('cjs'),
@@ -642,9 +628,12 @@ const OutputOptionsSchema = v.strictObject({
     v.optional(v.boolean()),
     v.description('Inline dynamic imports'),
   ),
+  manualChunks: v.optional(
+    v.never('manualChunks is not supported. Please use advancedChunks instead'),
+  ),
   advancedChunks: v.optional(AdvancedChunksSchema),
-  comments: v.pipe(
-    v.optional(v.union([v.literal('none'), v.literal('preserve-legal')])),
+  legalComments: v.pipe(
+    v.optional(v.union([v.literal('none'), v.literal('inline')])),
     v.description('Control comments in the output'),
   ),
   plugins: v.optional(v.custom<RolldownOutputPluginOption>(() => true)),
@@ -653,7 +642,7 @@ const OutputOptionsSchema = v.strictObject({
     v.description('Disable require polyfill injection'),
   ),
   target: v.pipe(
-    v.optional(v.enum(ESTarget)),
+    v.optional(v.union([v.string(), v.array(v.string())])),
     v.description('The JavaScript target environment'),
   ),
   hoistTransitiveImports: v.optional(
@@ -664,6 +653,8 @@ const OutputOptionsSchema = v.strictObject({
       return true;
     }, () => `The 'true' value is not supported`),
   ),
+  preserveModules: v.optional(v.boolean()),
+  virtualDirname: v.optional(v.string()),
 });
 
 const getAddonDescription = (
@@ -859,5 +850,10 @@ export function getOutputCliKeys(): string[] {
 }
 
 export function getJsonSchema(): ObjectSchema {
-  return toJsonSchema(CliOptionsSchema) as ObjectSchema;
+  return toJsonSchema(CliOptionsSchema, {
+    // errorMode: 'ignore' is set to ignore `never` schema
+    // there's no way to suppress the error one-by-one
+    // https://github.com/fabian-hiller/valibot/issues/1062
+    errorMode: 'ignore',
+  }) as ObjectSchema;
 }
