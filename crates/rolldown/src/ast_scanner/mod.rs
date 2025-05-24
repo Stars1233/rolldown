@@ -44,6 +44,12 @@ use sugar_path::SugarPath;
 
 use crate::SharedOptions;
 
+// TODO: Not sure if this necessary to match the module request.
+// If we found it cause high false positive, we could add a extra step to match it package name as
+// well.
+static ENABLED_CJS_NAMESPACE_MERGING_MODULE_REQUEST: [&str; 3] =
+  ["this-is-only-used-for-testing", "react", "react/jsx-runtime"];
+
 #[derive(Debug)]
 pub struct ScanResult {
   /// Using `IndexMap` to make sure the order of the named imports always sorted by the span of the
@@ -79,6 +85,8 @@ pub struct ScanResult {
   pub new_url_references: FxHashMap<Span, ImportRecordIdx>,
   pub this_expr_replace_map: FxHashMap<Span, ThisExprReplaceKind>,
   pub hmr_info: HmrInfo,
+  pub hmr_hot_ref: Option<SymbolRef>,
+  pub directive_range: Vec<Span>,
 }
 
 pub struct AstScanner<'me, 'ast> {
@@ -134,6 +142,10 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
     let name = concat_string!(legitimized_repr_name, "_exports");
     let namespace_object_ref = symbol_ref_db.create_facade_root_symbol_ref(&name);
 
+    let hmr_hot_ref = options.experimental.hmr.as_ref().map(|_| {
+      symbol_ref_db.create_facade_root_symbol_ref(&concat_string!(legitimized_repr_name, "_hot"))
+    });
+
     let result = ScanResult {
       named_imports: FxIndexMap::default(),
       named_exports: FxHashMap::default(),
@@ -160,6 +172,8 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       new_url_references: FxHashMap::default(),
       this_expr_replace_map: FxHashMap::default(),
       hmr_info: HmrInfo::default(),
+      hmr_hot_ref,
+      directive_range: vec![],
     };
 
     Self {
@@ -320,7 +334,7 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
         itoa::Buffer::new().format(self.current_stmt_info.stmt_idx.unwrap_or_default().raw()),
         "#"
       ));
-    let rec = RawImportRecord::new(
+    let mut rec = RawImportRecord::new(
       Rstr::from(module_request),
       kind,
       namespace_ref,
@@ -331,6 +345,13 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       self.current_stmt_info.stmt_idx.map(|idx| idx + 1),
     )
     .with_meta(init_meta);
+
+    // TODO: maybe we could make it configurable?
+    if matches!(rec.kind, ImportKind::Import)
+      && ENABLED_CJS_NAMESPACE_MERGING_MODULE_REQUEST.contains(&module_request)
+    {
+      rec.meta.insert(ImportRecordMeta::SAFELY_MERGE_CJS_NS);
+    }
 
     let id = self.result.import_records.push(rec);
     self.current_stmt_info.import_records.push(id);
@@ -434,8 +455,10 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
   ) {
     // We will pretend `export { [imported] as [export_name] }` to be `import `
     let ident = if export_name == "default" {
-      let importee_repr =
-        self.result.import_records[record_id].module_request.as_path().representative_file_name();
+      let importee_repr = self.result.import_records[record_id]
+        .module_request
+        .as_path()
+        .representative_file_name(false);
       let importee_repr = legitimize_identifier_name(&importee_repr);
       Cow::Owned(concat_string!(importee_repr, "_default"))
     } else {
@@ -452,9 +475,6 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       record_id,
       span_imported,
     };
-    if name_import.imported.is_default() {
-      self.result.import_records[record_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_DEFAULT);
-    }
     self.result.named_exports.insert(
       export_name.into(),
       LocalExport { referenced: generated_imported_as_ref, span: name_import.span_imported },
@@ -480,7 +500,6 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
       record_id,
     };
 
-    self.result.import_records[record_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_STAR);
     self.result.named_exports.insert(
       export_name.into(),
       LocalExport { referenced: generated_imported_as_ref, span: name_import.span_imported },
@@ -626,18 +645,13 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
         let sym = spec.local.expect_symbol_id();
         let imported = spec.imported.name();
         self.add_named_import(sym, imported.as_str(), rec_id, spec.imported.span());
-        if imported == "default" {
-          self.result.import_records[rec_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_DEFAULT);
-        }
       }
       ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(spec) => {
         self.add_named_import(spec.local.expect_symbol_id(), "default", rec_id, spec.span);
-        self.result.import_records[rec_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_DEFAULT);
       }
       ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(spec) => {
         let symbol_id = spec.local.expect_symbol_id();
         self.add_star_import(symbol_id, rec_id, spec.span);
-        self.result.import_records[rec_id].meta.insert(ImportRecordMeta::CONTAINS_IMPORT_STAR);
       }
     });
   }

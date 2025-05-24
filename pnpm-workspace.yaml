@@ -3,8 +3,23 @@ packages:
   - packages/rolldown/tests
   - packages/rolldown/tests/module-federation
   - packages/rolldown/npm/*
+  - packages/test-dev-server/tests
+  - packages/test-dev-server/tests/fixtures/*
+  - packages/test-dev-server/tests/tmp/fixtures/*
   - docs
   - examples/*
   - examples/module-federation/*
   - scripts
   - crates/rolldown/tests/rolldown/topics/npm_packages
+
+shellEmulator: true
+
+# Define a catalog of version ranges.
+catalog:
+  '@oxc-node/cli': '^0.0.27'
+  '@oxc-node/core': '^0.0.27'
+  '@oxc-project/runtime': '0.72.0'
+  '@oxc-project/types': '0.72.0'
+  'oxc-parser': '0.72.0'
+  'oxc-transform': '0.72.0'
+  'tsdown': '0.11.11'

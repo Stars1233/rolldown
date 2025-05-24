@@ -26,12 +26,15 @@ napi = { workspace = true }
 napi-derive = { workspace = true }
 oxc = { workspace = true }
 oxc_parser_napi = { workspace = true }
+oxc_resolver_napi = { workspace = true }
 oxc_transform_napi = { workspace = true }
 rolldown = { workspace = true }
 rolldown_common = { workspace = true }
 rolldown_error = { workspace = true, features = ["napi"] }
 rolldown_plugin = { workspace = true }
 rolldown_plugin_alias = { workspace = true }
+rolldown_plugin_asset = { workspace = true }
+rolldown_plugin_asset_import_meta_url = { workspace = true }
 rolldown_plugin_build_import_analysis = { workspace = true }
 rolldown_plugin_dynamic_import_vars = { workspace = true }
 rolldown_plugin_import_glob = { workspace = true }
@@ -41,12 +44,14 @@ rolldown_plugin_load_fallback = { workspace = true }
 rolldown_plugin_manifest = { workspace = true }
 rolldown_plugin_module_federation = { workspace = true }
 rolldown_plugin_module_preload_polyfill = { workspace = true }
+rolldown_plugin_oxc_runtime = { workspace = true }
 rolldown_plugin_replace = { workspace = true }
-rolldown_plugin_report = { workspace = true }
+rolldown_plugin_reporter = { workspace = true }
 rolldown_plugin_transform = { workspace = true }
 rolldown_plugin_vite_resolve = { workspace = true }
 rolldown_plugin_wasm_fallback = { workspace = true }
 rolldown_plugin_wasm_helper = { workspace = true }
+rolldown_plugin_web_worker_post = { workspace = true }
 rolldown_sourcemap = { workspace = true }
 rolldown_tracing = { workspace = true }
 rolldown_utils = { workspace = true }

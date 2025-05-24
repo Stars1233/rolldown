@@ -3,12 +3,20 @@ import { build, type BuildOptions } from './api/build';
 import { rolldown } from './api/rolldown';
 import { RolldownBuild } from './api/rolldown/rolldown-build';
 import { watch } from './api/watch';
-import type { RolldownWatcher } from './api/watch/watch-emitter';
+import type {
+  RolldownWatcher,
+  RolldownWatcherEvent,
+} from './api/watch/watch-emitter';
 import type { PreRenderedChunk } from './binding';
+import type {
+  LoggingFunction,
+  WarningHandlerWithDefault,
+} from './log/log-handler';
 import type {
   LogLevel,
   LogLevelOption,
   LogOrStringHandler,
+  RollupError,
   RollupLog,
   RollupLogWithString,
 } from './log/logging';
@@ -17,6 +25,8 @@ import type {
   InputOption,
   InputOptions,
   JsxOptions,
+  ModuleTypes,
+  WatcherOptions,
 } from './options/input-options';
 import type { NormalizedInputOptions } from './options/normalized-input-options';
 import type {
@@ -54,11 +64,10 @@ import type {
   SourceDescription,
   TransformResult,
 } from './plugin';
-import { withFilter } from './plugin';
 import type {
+  GeneralHookFilter,
   HookFilter,
   ModuleTypeFilter,
-  StringFilter,
 } from './plugin/hook-filter';
 import type {
   MinimalPluginContext,
@@ -73,12 +82,7 @@ import type {
 } from './plugin/plugin-context';
 import type { TransformPluginContext } from './plugin/transform-plugin-context';
 import type { ConfigExport } from './types/config-export';
-import type {
-  LoggingFunction,
-  RollupError,
-  SourcemapIgnoreListOption,
-  WarningHandlerWithDefault,
-} from './types/misc';
+import type { SourcemapIgnoreListOption } from './types/misc';
 import type { ModuleInfo } from './types/module-info';
 import type { TreeshakingOptions } from './types/module-side-effects';
 import type { OutputBundle } from './types/output-bundle';
@@ -95,7 +99,7 @@ import type { ExistingRawSourceMap, SourceMapInput } from './types/sourcemap';
 import type { PartialNull } from './types/utils';
 import { defineConfig } from './utils/define-config';
 
-export { build, defineConfig, rolldown, watch, withFilter };
+export { build, defineConfig, rolldown, watch };
 export const VERSION: string = version;
 
 export type {
@@ -111,6 +115,7 @@ export type {
   ExistingRawSourceMap,
   ExternalOption,
   FunctionPluginHooks,
+  GeneralHookFilter,
   GetModuleInfo,
   GlobalsFunction,
   HookFilter,
@@ -132,6 +137,7 @@ export type {
   ModuleOptions,
   ModuleType,
   ModuleTypeFilter,
+  ModuleTypes,
   NormalizedInputOptions,
   NormalizedOutputOptions,
   ObjectHook,
@@ -158,6 +164,7 @@ export type {
   RolldownPlugin,
   RolldownPluginOption,
   RolldownWatcher,
+  RolldownWatcherEvent,
   RollupError,
   RollupLog,
   RollupLogWithString,
@@ -165,10 +172,10 @@ export type {
   SourceMap,
   SourcemapIgnoreListOption,
   SourceMapInput,
-  StringFilter,
   TransformPluginContext,
   TransformResult,
   TreeshakingOptions,
   WarningHandlerWithDefault,
+  WatcherOptions,
   WatchOptions,
 };

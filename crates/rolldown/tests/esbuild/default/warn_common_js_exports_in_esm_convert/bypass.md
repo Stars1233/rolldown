@@ -15,7 +15,6 @@ module.exports = 3;
 ```
 ### rolldown
 ```js
-"use strict";
 
 //#region cjs-in-esm.js
 let foo = 1;
@@ -23,7 +22,7 @@ exports.foo = 2;
 module.exports = 3;
 
 //#endregion
-exports.foo = foo
+exports.foo = foo;
 ```
 ### diff
 ```diff
@@ -56,14 +55,13 @@ module.exports.bar = 3;
 ```
 ### rolldown
 ```js
-"use strict";
 
 //#region cjs-in-esm2.js
 let foo = 1;
 module.exports.bar = 3;
 
 //#endregion
-exports.foo = foo
+exports.foo = foo;
 ```
 ### diff
 ```diff

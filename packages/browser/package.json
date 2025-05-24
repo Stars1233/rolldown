@@ -1,6 +1,6 @@
 {
   "name": "@rolldown/browser",
-  "version": "1.0.0-beta.8",
+  "version": "1.0.0-beta.9",
   "description": "Fast JavaScript/TypeScript bundler in Rust with Rollup-compatible API.",
   "homepage": "https://rolldown.rs/",
   "type": "module",
@@ -31,11 +31,12 @@
   "types": "./dist/index.d.cts",
   "exports": {
     ".": {
-      "browser": "./dist/browser.mjs",
+      "browser": "./dist/index.browser.mjs",
       "require": "./dist/index.cjs",
       "import": "./dist/index.mjs"
     },
     "./experimental": {
+      "browser": "./dist/experimental-index.browser.mjs",
       "require": "./dist/experimental-index.cjs",
       "import": "./dist/experimental-index.mjs"
     },
@@ -57,23 +58,14 @@
     "build": "pnpm run build:debug",
     "build:debug": "pnpm run --filter rolldown build-browser:debug",
     "build:release": "pnpm run --filter rolldown build-browser:release",
-    "build-node": "cross-env BROWSER_PKG=1 pnpm run --filter rolldown build-node",
+    "build-node": "BROWSER_PKG=1 pnpm run --filter rolldown build-node",
     "preinstall": "npx only-allow pnpm"
   },
   "dependencies": {
     "@napi-rs/wasm-runtime": "^0.2.8",
-    "@oxc-project/types": "0.66.0",
-    "@valibot/to-json-schema": "1.0.0",
-    "ansis": "^3.17.0",
-    "pathe": "^2.0.3",
-    "valibot": "1.0.0"
-  },
-  "peerDependencies": {
-    "@oxc-project/runtime": "0.66.0"
-  },
-  "peerDependenciesMeta": {
-    "@oxc-project/runtime": {
-      "optional": true
-    }
+    "@oxc-project/runtime": "catalog:",
+    "@oxc-project/types": "catalog:",
+    "ansis": "^4.0.0",
+    "pathe": "^2.0.3"
   }
 }

@@ -46,7 +46,6 @@ var globalName = (() => {
 ```js
 var globalName = (function(exports) {
 
-"use strict";
 Object.defineProperty(exports, '__esModule', { value: true });
 
 
@@ -69,20 +68,20 @@ function Fn() {}
 var Class = class {};
 
 //#endregion
-exports.C = Class
-exports.Class = Class
-exports.Fn = Fn
-exports.abc = abc
+exports.C = Class;
+exports.Class = Class;
+exports.Fn = Fn;
+exports.abc = abc;
 Object.defineProperty(exports, 'b', {
   enumerable: true,
   get: function () {
     return b_exports;
   }
 });
-exports.c = c
-exports.default = entry_default
-exports.l = l
-exports.v = v
+exports.c = c;
+exports.default = entry_default;
+exports.l = l;
+exports.v = v;
 return exports;
 })({});
 ```

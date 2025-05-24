@@ -1,11 +1,11 @@
 import type { BindingBundlerOptions } from '../binding';
+import type { LogHandler } from '../log/log-handler';
 import { getLogger, getOnLog } from '../log/logger';
 import { LOG_LEVEL_INFO } from '../log/logging';
 import type { InputOptions } from '../options/input-options';
 import type { OutputOptions } from '../options/output-options';
 import { PluginDriver } from '../plugin/plugin-driver';
 import { getObjectPlugins } from '../plugin/plugin-driver';
-import type { LogHandler } from '../types/misc';
 import { bindingifyInputOptions } from './bindingify-input-options';
 import { bindingifyOutputOptions } from './bindingify-output-options';
 import { composeJsPlugins } from './compose-js-plugins';
@@ -13,6 +13,7 @@ import { initializeParallelPlugins } from './initialize-parallel-plugins';
 import {
   ANONYMOUS_OUTPUT_PLUGIN_PREFIX,
   ANONYMOUS_PLUGIN_PREFIX,
+  BUILTIN_PLUGINS,
   checkOutputPluginOption,
   normalizePluginOption,
   normalizePlugins,
@@ -51,6 +52,7 @@ export async function createBundlerOptions(
   );
 
   let plugins = [
+    ...BUILTIN_PLUGINS,
     ...normalizePlugins(inputPlugins, ANONYMOUS_PLUGIN_PREFIX),
     ...checkOutputPluginOption(
       normalizePlugins(normalizedOutputPlugins, ANONYMOUS_OUTPUT_PLUGIN_PREFIX),

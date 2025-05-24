@@ -13,7 +13,8 @@ use oxc::transformer::TransformOptions;
 use rolldown::{
   AddonOutputOption, AdvancedChunksOptions, AssetFilenamesOutputOption, BundlerOptions,
   ChunkFilenamesOutputOption, DeferSyncScanDataOption, HashCharacters, IsExternal, MatchGroup,
-  ModuleType, OutputExports, OutputFormat, Platform, RawMinifyOptions, SanitizeFilename,
+  ModuleType, OutputExports, OutputFormat, Platform, PreserveEntrySignatures, RawMinifyOptions,
+  SanitizeFilename,
 };
 use rolldown_common::DeferSyncScanData;
 use rolldown_plugin::__inner::SharedPluginable;
@@ -181,6 +182,28 @@ pub fn normalize_binding_options(
     }))
   });
 
+  let mark_module_loaded = input_options.mark_module_loaded.map(|ts_fn| {
+    rolldown::MarkModuleLoaded::new(Arc::new(move |module_id, success| {
+      let ts_fn = Arc::clone(&ts_fn);
+      let module_id = module_id.to_string();
+      Box::pin(async move {
+        ts_fn.invoke_async((module_id, success).into()).await.map_err(anyhow::Error::from)
+      })
+    }))
+  });
+
+  let on_log = input_options.on_log.map(|ts_fn| {
+    rolldown::OnLog::new(Arc::new(move |level, log| {
+      let ts_fn = Arc::clone(&ts_fn);
+      Box::pin(async move {
+        ts_fn
+          .invoke_async((level.to_string(), log.into()).into())
+          .await
+          .map_err(anyhow::Error::from)
+      })
+    }))
+  });
+
   let mut module_types = None;
   if let Some(raw) = input_options.module_types {
     let mut tmp: FxHashMap<_, _> = FxHashMapExt::with_capacity(raw.len());
@@ -193,7 +216,16 @@ pub fn normalize_binding_options(
     }
     module_types = Some(tmp);
   }
-  let target = output_options.target.as_deref().map(std::str::FromStr::from_str).transpose()?;
+  let target = output_options.target.map(|target| match target {
+    Either::A(target) => {
+      if target.contains(',') {
+        target.split(',').map(String::from).collect()
+      } else {
+        vec![target]
+      }
+    }
+    Either::B(target) => target,
+  });
   let transform = input_options
     .transform
     .map(|transform_option| {
@@ -311,14 +343,14 @@ pub fn normalize_binding_options(
     profiler_names: input_options.profiler_names,
     jsx: input_options.jsx.map(Into::into),
     watch: input_options.watch.map(TryInto::try_into).transpose()?,
-    comments: output_options
-      .comments
+    legal_comments: output_options
+      .legal_comments
       .map(|inner| match inner.as_str() {
-        "none" => Ok(rolldown::Comments::None),
-        "preserve-legal" => Ok(rolldown::Comments::PreserveLegal),
+        "none" => Ok(rolldown::LegalComments::None),
+        "inline" => Ok(rolldown::LegalComments::Inline),
         _ => Err(napi::Error::new(
           napi::Status::GenericFailure,
-          format!("Invalid valid for `comments` option: {inner}"),
+          format!("Invalid value for `legalComments` option: {inner}"),
         )),
       })
       .transpose()?,
@@ -333,6 +365,36 @@ pub fn normalize_binding_options(
       .map(Into::into),
     debug: input_options.debug.map(|inner| rolldown::DebugOptions { session_id: inner.session_id }),
     invalidate_js_side_cache,
+    mark_module_loaded,
+    log_level: Some(input_options.log_level.into()),
+    on_log,
+    preserve_modules: output_options.preserve_modules,
+    virtual_dirname: output_options.virtual_dirname,
+    preserve_modules_root: output_options.preserve_modules_root,
+    preserve_entry_signatures: output_options
+      .preserve_entry_signatures
+      .map(|v| match v {
+        Either::A(str) => match str.as_str() {
+          "exports-only" => Ok(PreserveEntrySignatures::ExportsOnly),
+          "strict" => Ok(PreserveEntrySignatures::Strict),
+          "allow-extension" => Ok(PreserveEntrySignatures::AllowExtension),
+          _ => Err(napi::Error::new(
+            napi::Status::GenericFailure,
+            format!("Invalid value for `preserveEntrySignatures` option: {str}"),
+          )),
+        },
+        Either::B(bool) => {
+          if bool {
+            Err(napi::Error::new(
+              napi::Status::GenericFailure,
+              format!("Invalid value for `preserveEntrySignatures` option: {bool}"),
+            ))
+          } else {
+            Ok(PreserveEntrySignatures::False)
+          }
+        }
+      })
+      .transpose()?,
   };
 
   #[cfg(not(target_family = "wasm"))]

@@ -34,7 +34,7 @@ pub type BindingOnLog = Option<JsCallback<FnArgs<(String, BindingLog)>, ()>>;
 
 #[napi(object, object_to_js = false)]
 #[derive(Default, Debug)]
-pub struct BindingInputOptions {
+pub struct BindingInputOptions<'env> {
   // Not going to be supported
   // @deprecated Use the "inlineDynamicImports" output option instead.
   // inlineDynamicImports?: boolean;
@@ -60,7 +60,7 @@ pub struct BindingInputOptions {
   // onwarn?: WarningHandlerWithDefault;
   // perf?: boolean;
   #[napi(ts_type = "(BindingBuiltinPlugin | BindingPluginOptions | undefined)[]")]
-  pub plugins: Vec<BindingPluginOrParallelJsPluginPlaceholder>,
+  pub plugins: Vec<BindingPluginOrParallelJsPluginPlaceholder<'env>>,
   pub resolve: Option<BindingResolveOptions>,
   // preserveEntrySignatures?: PreserveEntrySignaturesOption;
   // /** @deprecated Use the "preserveModules" output option instead. */
@@ -102,4 +102,7 @@ pub struct BindingInputOptions {
   #[napi(ts_type = "() => void")]
   // TODO: The `FnArgs<()>` is not supported.
   pub invalidate_js_side_cache: Option<JsCallback<FnArgs<(Option<bool>,)>, ()>>,
+  #[debug(skip)]
+  #[napi(ts_type = "(id: string, success: boolean) => void")]
+  pub mark_module_loaded: Option<JsCallback<FnArgs<(String, bool)>, ()>>,
 }

@@ -4,19 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:main": "cross-env RUST_BACKTRACE=1 ROLLDOWN_TEST=1 vitest run --exclude '**/watch.test.ts' --reporter verbose --hideSkippedTests",
-    "test:watcher": "cross-env RUST_BACKTRACE=1 ROLLDOWN_TEST=1 vitest run watch.test.ts --reporter verbose --hideSkippedTests",
+    "test:main": "RUST_BACKTRACE=1 ROLLDOWN_TEST=1 vitest run --exclude '**/watch.test.ts' --reporter verbose --hideSkippedTests",
+    "test:watcher": "RUST_BACKTRACE=1 ROLLDOWN_TEST=1 vitest run watch.test.ts --reporter verbose --hideSkippedTests",
     "test:stability": "node ./stability/issue-3453/src/build.mjs && node ./stability/issue-3453/verify.mjs",
+    "test:types": "vitest run --typecheck.only --reporter verbose --hideSkippedTests",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "cross-env": "^7.0.3",
     "rolldown": "workspace:*",
     "vite": "^6.0.0",
     "vitest": "^3.0.1"
   },
   "devDependencies": {
-    "@types/node": "22.14.0"
+    "@types/node": "22.15.18",
+    "@oxc-node/core": "catalog:",
+    "tsx": "^4.19.4"
   },
   "exports": {
     ".": {

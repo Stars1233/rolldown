@@ -5,8 +5,9 @@ use oxc::ast_visit::VisitMut;
 use oxc::diagnostics::Severity as OxcSeverity;
 use oxc::minifier::{CompressOptions, Compressor};
 use oxc::semantic::{SemanticBuilder, Stats};
-use oxc::transformer::{
-  InjectGlobalVariables, ReplaceGlobalDefines, ReplaceGlobalDefinesConfig, Transformer,
+use oxc::transformer::Transformer;
+use oxc::transformer_plugins::{
+  InjectGlobalVariables, ReplaceGlobalDefines, ReplaceGlobalDefinesConfig,
 };
 
 use rolldown_common::{ESTarget, NormalizedBundlerOptions};
@@ -129,7 +130,6 @@ impl PreProcessEcmaAst {
     ast.program.with_mut(|fields| {
       let mut pre_processor = PreProcessor::new(fields.allocator, bundle_options.keep_names);
       pre_processor.visit_program(fields.program);
-      ast.contains_use_strict = pre_processor.contains_use_strict;
     });
 
     ast.program.with_mut(|fields| {

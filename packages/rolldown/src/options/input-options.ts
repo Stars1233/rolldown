@@ -49,6 +49,7 @@ export type ModuleTypes = Record<
   | 'binary'
   | 'empty'
   | 'css'
+  | 'asset'
 >;
 
 export interface JsxOptions {
@@ -61,7 +62,7 @@ export interface JsxOptions {
   development?: boolean;
 }
 
-export interface WatchOptions {
+export interface WatcherOptions {
   skipWrite?: boolean;
   buildDelay?: number;
   notify?: {
@@ -113,9 +114,7 @@ export interface InputOptions {
   /**
    * Expected platform where the code run.
    *
-   * @default
-   * - 'node' if the format is 'cjs'
-   * - 'browser' for other formats
+   * @default "browser"
    */
   platform?: 'node' | 'browser' | 'neutral';
   shimMissingExports?: boolean;
@@ -140,6 +139,7 @@ export interface InputOptions {
     viteMode?: boolean;
     resolveNewUrlToAsset?: boolean;
     hmr?: HmrOptions;
+    attachDebugInfo?: boolean;
   };
   /**
    * Replace global variables or [property accessors](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Property_accessors) with the provided values.
@@ -223,7 +223,7 @@ export interface InputOptions {
    */
   jsx?: false | 'react' | 'react-jsx' | 'preserve' | JsxOptions;
   transform?: OxcTransformOption;
-  watch?: WatchOptions | false;
+  watch?: WatcherOptions | false;
   dropLabels?: string[];
   keepNames?: boolean;
   checks?: ChecksOptions;

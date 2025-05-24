@@ -1,16 +1,17 @@
 import type {
+  BindingAssetPluginConfig,
   BindingBuildImportAnalysisPluginConfig,
   BindingBuiltinPluginName,
   BindingDynamicImportVarsPluginConfig,
-  BindingGlobImportPluginConfig,
+  BindingImportGlobPluginConfig,
   BindingIsolatedDeclarationPluginConfig,
   BindingJsonPluginConfig,
   BindingManifestPluginConfig,
   BindingMfManifest,
   BindingModuleFederationPluginOption,
-  BindingModulePreloadPolyfillPluginConfig,
+  BindingOxcRuntimePluginConfig,
   BindingRemote,
-  BindingReportPluginConfig,
+  BindingReporterPluginConfig,
   BindingViteResolvePluginConfig,
 } from '../binding';
 import { makeBuiltinPluginCallable } from './utils';
@@ -23,10 +24,8 @@ export class BuiltinPlugin {
   ) {}
 }
 
-export function modulePreloadPolyfillPlugin(
-  config?: BindingModulePreloadPolyfillPluginConfig,
-): BuiltinPlugin {
-  return new BuiltinPlugin('builtin:module-preload-polyfill', config);
+export function modulePreloadPolyfillPlugin(): BuiltinPlugin {
+  return new BuiltinPlugin('builtin:module-preload-polyfill');
 }
 
 export function dynamicImportVarsPlugin(
@@ -36,15 +35,15 @@ export function dynamicImportVarsPlugin(
 }
 
 export function importGlobPlugin(
-  config?: BindingGlobImportPluginConfig,
+  config?: BindingImportGlobPluginConfig,
 ): BuiltinPlugin {
   return new BuiltinPlugin('builtin:import-glob', config);
 }
 
-export function reportPlugin(
-  config?: BindingReportPluginConfig,
+export function reporterPlugin(
+  config?: BindingReporterPluginConfig,
 ): BuiltinPlugin {
-  return new BuiltinPlugin('builtin:report', config);
+  return new BuiltinPlugin('builtin:reporter', config);
 }
 
 export function manifestPlugin(
@@ -121,4 +120,24 @@ export function isolatedDeclarationPlugin(
   config?: BindingIsolatedDeclarationPluginConfig,
 ): BuiltinPlugin {
   return new BuiltinPlugin('builtin:isolated-declaration', config);
+}
+
+export function assetPlugin(
+  config?: BindingAssetPluginConfig,
+): BuiltinPlugin {
+  return new BuiltinPlugin('builtin:asset', config);
+}
+
+export function assetImportMetaUrlPlugin(): BuiltinPlugin {
+  return new BuiltinPlugin('builtin:asset-import-meta-url');
+}
+
+export function webWorkerPostPlugin(): BuiltinPlugin {
+  return new BuiltinPlugin('builtin:web-worker-post');
+}
+
+export function oxcRuntimePlugin(
+  config?: BindingOxcRuntimePluginConfig,
+): BuiltinPlugin {
+  return new BuiltinPlugin('builtin:oxc-runtime', config);
 }

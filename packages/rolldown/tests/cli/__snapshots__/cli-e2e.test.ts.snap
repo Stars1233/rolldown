@@ -36,7 +36,6 @@ OPTIONS
   --checks.unresolved-entry   Whether to emit warning when detecting unresolved entry.
   --checks.unresolved-import  Whether to emit warning when detecting unresolved import.
   --chunk-file-names <name>   Name pattern for emitted secondary chunks.
-  --comments <comments>       Control comments in the output.
   --css-chunk-file-names <css-chunk-file-names>Name pattern for emitted css secondary chunks.
   --css-entry-file-names <css-entry-file-names>Name pattern for emitted css entry chunks.
   --cwd <cwd>                 Current working directory.
@@ -61,12 +60,15 @@ OPTIONS
   --jsx.mode <jsx.mode>       Jsx transformation mode.
   --jsx.refresh               React refresh transformation.
   --keep-names                Keep function/class name.
+  --legal-comments <legal-comments>Control comments in the output.
   --log-level <log-level>     Log level (silent, info, debug, warn).
   --module-types <types>      Module types for customized extensions.
   --no-external-live-bindings Disable external live bindings.
   --no-treeshake              Disable treeshaking.
   --outro <outro>             Code to insert the bottom of the bundled file (inside the wrapper function).
   --polyfill-require          Disable require polyfill injection.
+  --preserve-modules          Preserve module structure.
+  --preserve-modules-root <preserve-modules-root>Put preserved modules under this path at root level.
   --sanitize-file-name        Sanitize file name.
   --shim-missing-exports      Create shim variables for missing exports.
   --sourcemap-debug-ids       Inject sourcemap debug IDs.
@@ -87,6 +89,7 @@ OPTIONS
   --transform.typescript.jsx-pragma-frag <transform.typescript.jsx-pragma-frag>.
   --transform.typescript.only-remove-type-imports .
   --transform.typescript.rewrite-import-extensions <transform.typescript.rewrite-import-extensions>.
+  --virtual-dirname <virtual-dirname>.
 
 EXAMPLES
 
@@ -150,7 +153,6 @@ console.log("2");
 exports[`cli options for bundling > should handle negative boolean options 1`] = `
 "(function(exports, node_fs) {
 
-"use strict";
 //#region rolldown:runtime
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -180,11 +182,11 @@ node_fs = __toESM(node_fs);
 const nonExternal = "nonExternal";
 
 //#endregion
-exports.nonExternal = nonExternal
-exports.read = node_fs.read
-exports.readFile = node_fs.readFile
-exports.readFileSync = node_fs.readFileSync
-exports.readSync = node_fs.readSync
+exports.nonExternal = nonExternal;
+exports.read = node_fs.read;
+exports.readFile = node_fs.readFile;
+exports.readFileSync = node_fs.readFileSync;
+exports.readSync = node_fs.readSync;
 return exports;
 })({}, node_fs);"
 `;
@@ -221,7 +223,7 @@ exports[`cli options for bundling > should handle single object options 1`] = `
 `;
 
 exports[`cli options for bundling > should handle single string options 1`] = `
-"<DIR>/index.js  chunk │ size: 0.14 kB
+"<DIR>/index.js  chunk │ size: 0.13 kB
 
 "
 `;
@@ -256,6 +258,12 @@ exports[`config > should allow loading ts config from non-working dir 1`] = `
 "
 `;
 
+exports[`config > should allow loading ts config with oxnode 1`] = `
+"<DIR>/index.js  chunk │ size: 0.11 kB
+
+"
+`;
+
 exports[`config > should allow loading ts config with tsx 1`] = `
 "<DIR>/index.js  chunk │ size: 0.11 kB
 
@@ -264,7 +272,7 @@ exports[`config > should allow loading ts config with tsx 1`] = `
 
 exports[`config > should allow multiply options 1`] = `
 "<DIR>/esm.js  chunk │ size: 0.14 kB
-<DIR>/cjs.js  chunk │ size: 0.15 kB
+<DIR>/cjs.js  chunk │ size: 0.14 kB
 
 "
 `;
@@ -274,14 +282,14 @@ exports[`config > should allow multiply output + call options hook once  + call 
 called output options hook
 called output options hook
 <DIR>/esm.js  chunk │ size: 0.18 kB
-<DIR>/cjs.js  chunk │ size: 0.19 kB
+<DIR>/cjs.js  chunk │ size: 0.17 kB
 
 "
 `;
 
 exports[`config > should allow multiply output 1`] = `
 "<DIR>/esm.js  chunk │ size: 0.14 kB
-<DIR>/cjs.js  chunk │ size: 0.15 kB
+<DIR>/cjs.js  chunk │ size: 0.14 kB
 
 "
 `;
@@ -303,7 +311,7 @@ exports[`watch cli > should allow multiply output + call options hook once + cal
 called output options hook
 called output options hook
 <DIR>/esm.js  chunk │ size: 0.18 kB
-<DIR>/cjs.js  chunk │ size: 0.19 kB
+<DIR>/cjs.js  chunk │ size: 0.17 kB
 
 "
 `;
@@ -319,7 +327,8 @@ onLog called:
 this.meta.watchMode false
 (test plugin) trigger onLog
 buildStart called:
-this.meta.watchMode false"
+this.meta.watchMode false
+closeBundle called:"
 `;
 
 exports[`watch cli > should require both ROLLDOWN_WATCH and this.meta.watchMode to be true 1`] = `
@@ -334,5 +343,6 @@ onLog called:
 this.meta.watchMode true
 (test plugin) trigger onLog
 buildStart called:
-this.meta.watchMode true"
+this.meta.watchMode true
+closeBundle called:"
 `;

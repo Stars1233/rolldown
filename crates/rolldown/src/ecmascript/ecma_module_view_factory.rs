@@ -34,7 +34,7 @@ pub async fn create_ecma_view(
 
   let module_id = ModuleId::new(&ctx.resolved_id.id);
 
-  let repr_name = module_id.as_path().representative_file_name();
+  let repr_name = module_id.as_path().representative_file_name(false);
   let repr_name = legitimize_identifier_name(&repr_name);
 
   let scanner = AstScanner::new(
@@ -69,6 +69,8 @@ pub async fn create_ecma_view(
     new_url_references: new_url_imports,
     this_expr_replace_map,
     hmr_info,
+    hmr_hot_ref,
+    directive_range,
   } = scanner.scan(ast.program())?;
 
   if !errors.is_empty() {
@@ -119,9 +121,9 @@ pub async fn create_ecma_view(
     mutations: vec![],
     new_url_references: new_url_imports,
     this_expr_replace_map,
-    esm_namespace_in_cjs: None,
-    esm_namespace_in_cjs_node_mode: None,
     hmr_info,
+    hmr_hot_ref,
+    directive_range,
   };
 
   let ecma_related = EcmaRelated { ast, symbols, dynamic_import_rec_exports_usage };

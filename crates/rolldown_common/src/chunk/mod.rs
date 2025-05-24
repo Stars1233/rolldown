@@ -1,8 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::{
+  borrow::Cow,
+  path::{Path, PathBuf},
+};
 
 use crate::{
   ChunkIdx, ChunkKind, FilenameTemplate, ModuleIdx, ModuleTable, NamedImport, NormalModule,
-  NormalizedBundlerOptions, RollupPreRenderedChunk, SymbolNameRefToken, SymbolRef,
+  NormalizedBundlerOptions, RollupPreRenderedChunk, SymbolRef,
 };
 pub mod chunk_table;
 pub mod types;
@@ -39,7 +42,6 @@ pub struct Chunk {
   pub asset_preliminary_filenames: FxIndexMap<ModuleIdx, PreliminaryFilename>,
   pub asset_absolute_preliminary_filenames: FxIndexMap<ModuleIdx, String>,
   pub canonical_names: FxHashMap<SymbolRef, Rstr>,
-  pub canonical_name_by_token: FxHashMap<SymbolNameRefToken, Rstr>,
   // Sorted by Module#stable_id of modules in the chunk
   pub cross_chunk_imports: Vec<ChunkIdx>,
   pub cross_chunk_dynamic_imports: Vec<ChunkIdx>,
@@ -51,9 +53,12 @@ pub struct Chunk {
   // meaningless if the chunk is an entrypoint
   pub exports_to_other_chunks: FxHashMap<SymbolRef, Rstr>,
   pub is_alive: bool,
+  pub input_base: ArcStr,
+  pub create_reasons: Vec<String>,
 }
 
 impl Chunk {
+  #[allow(clippy::too_many_arguments)]
   pub fn new(
     name: Option<ArcStr>,
     reference_id: Option<ArcStr>,
@@ -62,6 +67,7 @@ impl Chunk {
     modules: Vec<ModuleIdx>,
     kind: ChunkKind,
     is_alive: bool,
+    input_base: ArcStr,
   ) -> Self {
     Self {
       exec_order: u32::MAX,
@@ -72,6 +78,7 @@ impl Chunk {
       bits,
       kind,
       is_alive,
+      input_base,
       ..Self::default()
     }
   }
@@ -111,7 +118,9 @@ impl Chunk {
     options: &NormalizedBundlerOptions,
     rollup_pre_rendered_chunk: &RollupPreRenderedChunk,
   ) -> anyhow::Result<FilenameTemplate> {
+    // https://github.com/rollup/rollup/blob/061a0387c8654222620f602471d66afd3c582048/src/Chunk.ts?plain=1#L526-L529
     let ret = if matches!(self.kind, ChunkKind::EntryPoint { is_user_defined, .. } if is_user_defined)
+      || options.preserve_modules
     {
       options.entry_filenames.call(rollup_pre_rendered_chunk).await?
     } else {
@@ -169,12 +178,41 @@ impl Chunk {
         hash
       }
     });
+    let chunk_name = if options.preserve_modules {
+      self.get_preserve_modules_chunk_name(options, chunk_name.as_str())
+    } else {
+      Cow::Borrowed(chunk_name.as_str())
+    };
 
-    let filename = filename_template.render(Some(chunk_name), None, hash_replacer).into();
+    let filename = filename_template.render(Some(chunk_name.as_ref()), None, hash_replacer).into();
 
     let name = make_unique_name(&filename, used_name_counts);
 
     Ok(PreliminaryFilename::new(name, hash_placeholder))
+  }
+
+  pub fn get_preserve_modules_chunk_name(
+    &self,
+    options: &NormalizedBundlerOptions,
+    chunk_name: &str,
+  ) -> Cow<str> {
+    let p = PathBuf::from(chunk_name);
+    if p.is_absolute() {
+      if let Some(ref preserve_modules_root) = options.preserve_modules_root {
+        if chunk_name.starts_with(preserve_modules_root) {
+          return Cow::Owned(
+            chunk_name[preserve_modules_root.len()..]
+              .trim_start_matches('/')
+              .trim_start_matches('\\')
+              .to_string(),
+          );
+        }
+      }
+      let p = p.relative(self.input_base.as_str());
+      Cow::Owned(p.to_slash_lossy().to_string())
+    } else {
+      Cow::Owned(PathBuf::from(&options.virtual_dirname).join(p).to_string_lossy().to_string())
+    }
   }
 
   pub async fn generate_css_preliminary_filename(

@@ -25,6 +25,8 @@ try {
 ```
 ### rolldown
 ```js
+
+
 //#region hoist-use-strict.js
 using a = b;
 
@@ -35,7 +37,7 @@ using a = b;
 ===================================================================
 --- esbuild	/out/hoist-use-strict.js
 +++ rolldown	hoist-use-strict.js
-@@ -1,20 +1,4 @@
+@@ -1,20 +1,6 @@
 -"use strict";
 -function foo() {
 -    "use strict";
@@ -56,6 +58,8 @@ using a = b;
 -} finally {
 -    __callDispose(_stack, _error, _hasError);
 -}
++
++
 +//#region hoist-use-strict.js
 +using a = b;
 +
@@ -89,8 +93,10 @@ try {
 ```
 ### rolldown
 ```js
-//#region hoist-directive.js
 "use wtf";
+
+
+//#region hoist-directive.js
 using a = b;
 
 //#endregion
@@ -100,8 +106,7 @@ using a = b;
 ===================================================================
 --- esbuild	/out/hoist-directive.js
 +++ rolldown	hoist-directive.js
-@@ -1,20 +1,5 @@
-+//#region hoist-directive.js
+@@ -1,20 +1,7 @@
  "use wtf";
 -function foo() {
 -    "use wtf";
@@ -122,6 +127,9 @@ using a = b;
 -} finally {
 -    __callDispose(_stack, _error, _hasError);
 -}
++
++
++//#region hoist-directive.js
 +using a = b;
 +
 +//#endregion

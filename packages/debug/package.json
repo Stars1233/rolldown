@@ -1,6 +1,6 @@
 {
   "name": "@rolldown/debug",
-  "version": "1.0.0-beta.8",
+  "version": "1.0.0-beta.9",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -10,6 +10,9 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@oxc-node/cli": "catalog:"
   },
   "exports": {
     ".": {
@@ -21,7 +24,7 @@
     "dist"
   ],
   "scripts": {
-    "gen-action-types": "node --import @oxc-node/core/register ../../scripts/src/gen-debug-action-types.ts",
+    "gen-action-types": "oxnode ../../scripts/src/gen-debug-action-types.ts",
     "build": "pnpm run gen-action-types && tsc -b",
     "test": "echo \"Error: no test specified\" && exit 1"
   }

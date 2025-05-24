@@ -1,4 +1,4 @@
-use rolldown_common::{ExternalModule, OutputExports};
+use rolldown_common::{AddonRenderContext, ExternalModule, OutputExports};
 use rolldown_error::{BuildDiagnostic, BuildResult};
 use rolldown_sourcemap::SourceJoiner;
 use rolldown_utils::concat_string;
@@ -10,39 +10,40 @@ use crate::{
   types::generator::GenerateContext,
   utils::chunk::{
     determine_export_mode::determine_export_mode,
-    determine_use_strict::determine_use_strict,
     namespace_marker::render_namespace_markers,
     render_chunk_exports::{
-      get_chunk_export_names, render_chunk_exports, render_wrapped_entry_chunk,
+      get_chunk_export_names_with_ctx, render_chunk_exports, render_wrapped_entry_chunk,
     },
   },
 };
 
 use super::utils::{
-  namespace::render_property_access, render_chunk_external_imports, render_factory_parameters,
-  render_modules_with_peek_runtime_module_at_first,
+  namespace::render_property_access, render_chunk_directives, render_chunk_external_imports,
+  render_factory_parameters, render_modules_with_peek_runtime_module_at_first,
 };
 
 #[allow(clippy::too_many_lines)]
 pub async fn render_umd<'code>(
   ctx: &GenerateContext<'_>,
-  banner: Option<&'code str>,
-  intro: Option<&'code str>,
-  outro: Option<&'code str>,
-  footer: Option<&'code str>,
+  addon_render_context: AddonRenderContext<'code>,
   module_sources: &'code RenderedModuleSources,
   warnings: &mut Vec<BuildDiagnostic>,
 ) -> BuildResult<SourceJoiner<'code>> {
   let mut source_joiner = SourceJoiner::default();
-
+  let AddonRenderContext { banner, intro, outro, footer, directives, .. } = addon_render_context;
   if let Some(banner) = banner {
     source_joiner.append_source(banner);
+  }
+
+  if !directives.is_empty() {
+    source_joiner.append_source(render_chunk_directives(directives.iter()));
+    source_joiner.append_source("");
   }
 
   // umd wrapper start
 
   // Analyze the export information of the chunk.
-  let export_names = get_chunk_export_names(ctx.chunk, ctx.link_output);
+  let export_names = get_chunk_export_names_with_ctx(ctx);
   let has_exports = !export_names.is_empty();
   let has_default_export = export_names.iter().any(|name| name.as_str() == "default");
 
@@ -89,10 +90,6 @@ pub async fn render_umd<'code>(
   {iife_start}{iife_export}{iife_end};
 }})({global_argument}function({factory_parameters}) {{",
   ));
-
-  if determine_use_strict(ctx) {
-    source_joiner.append_source("\"use strict\";");
-  }
 
   if let Some(intro) = intro {
     source_joiner.append_source(intro);
@@ -186,7 +183,7 @@ async fn render_iife_export(
       None => {
         warnings.push(
           BuildDiagnostic::missing_global_name(
-            // Here the rollup using external.id
+            external.id.to_string(),
             external.name.clone(),
             external.identifier_name.clone(),
           )

@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "type-check": "tsc -b",
-    "setup-bench": "node --import @oxc-node/core/register ./misc/setup-benchmark-input/index.js",
-    "esbuild-snap-diff": "node --import @oxc-node/core/register ./snap-diff/index.ts"
+    "setup-bench": "oxnode ./misc/setup-benchmark-input/index.js",
+    "esbuild-snap-diff": "oxnode ./snap-diff/index.ts"
   },
   "dependencies": {
     "@parcel/watcher": "^2.4.1",
@@ -29,12 +29,11 @@
     "zx": "^8.1.2"
   },
   "devDependencies": {
-    "@oxc-node/core": "^0.0.22",
-    "@types/diff": "^7.0.0",
+    "@oxc-node/cli": "catalog:",
     "@types/lodash-es": "^4.17.12",
     "acorn": "^8.12.1",
     "astring": "^1.9.0",
-    "diff": "^7.0.0",
+    "diff": "^8.0.0",
     "estree-toolkit": "^1.7.8",
     "micromatch": "^4.0.8",
     "web-tree-sitter": "^0.25.0"

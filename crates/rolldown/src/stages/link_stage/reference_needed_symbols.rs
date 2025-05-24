@@ -41,8 +41,9 @@ impl LinkStage<'_> {
         // - Mutating and parallel reading is in different memory locations
         let stmt_infos = unsafe { &mut *(addr_of!(importer.stmt_infos).cast_mut()) };
         let importer_side_effect = unsafe { &mut *(addr_of!(importer.side_effects).cast_mut()) };
+        let mut symbols_to_be_declared = vec![];
 
-        stmt_infos.infos.iter_mut().for_each(|stmt_info| {
+        stmt_infos.infos.iter_mut_enumerated().for_each(|(stmt_info_idx, stmt_info)| {
           stmt_info.import_records.iter().for_each(|rec_id| {
             let rec = &importer.import_records[*rec_id];
             if rec.is_dummy() {
@@ -153,15 +154,22 @@ impl LinkStage<'_> {
                             .push(self.runtime.resolve_symbol("__reExport").into());
                           stmt_info.referenced_symbols.push(importer.namespace_object_ref.into());
                         } else {
-                          // - import * as bar from 'bar_cjs'
-                          // - import { prop } from 'bar_cjs'
-                          // will be removed in the final bundler. Nothing need to do here.
-                          // stmt_info.side_effect = importee.side_effects.has_side_effects();
+                          stmt_info.side_effect = importee.side_effects.has_side_effects();
 
-                          // `require_bar_cjs`
-                          // stmt_info
-                          //   .referenced_symbols
-                          //   .push(importee_linking_info.wrapper_ref.unwrap().into());
+                          // Turn `import * as bar from 'bar_cjs'` into `var import_bar_cjs = __toESM(require_bar_cjs())`
+                          // Turn `import { prop } from 'bar_cjs'; prop;` into `var import_bar_cjs = __toESM(require_bar_cjs()); import_bar_cjs.prop;`
+                          // Reference to `require_bar_cjs`
+                          stmt_info
+                            .referenced_symbols
+                            .push(importee_linking_info.wrapper_ref.unwrap().into());
+                          stmt_info
+                            .referenced_symbols
+                            .push(self.runtime.resolve_symbol("__toESM").into());
+                          symbols_to_be_declared.push((rec.namespace_ref, stmt_info_idx));
+                          rec.namespace_ref.set_name(
+                            &mut symbols.lock().unwrap(),
+                            &concat_string!("import_", importee.repr_name),
+                          );
                         }
                       }
                       WrapKind::Esm => {
@@ -246,6 +254,11 @@ impl LinkStage<'_> {
             stmt_info.referenced_symbols.push(self.runtime.resolve_symbol("__name").into());
           }
         });
+
+        symbols_to_be_declared.into_iter().for_each(|(symbol_ref, idx)| {
+          stmt_infos.declare_symbol_for_stmt(idx, symbol_ref);
+        });
+
         (importer_idx, record_meta_pairs)
       })
       .collect::<Vec<_>>();

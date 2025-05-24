@@ -18,13 +18,12 @@ var someName = (() => {
 ```js
 var someName = (function(exports) {
 
-"use strict";
 
 //#region entry.js
 const foo = 123;
 
 //#endregion
-exports.foo = foo
+exports.foo = foo;
 return exports;
 })({});
 ```

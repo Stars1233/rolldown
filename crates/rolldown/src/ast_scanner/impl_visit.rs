@@ -8,12 +8,13 @@ use oxc::{
   span::{GetSpan, Span},
 };
 use rolldown_common::{
-  EcmaModuleAstUsage, ImportKind, ImportRecordMeta, RUNTIME_MODULE_ID, StmtInfoMeta,
+  EcmaModuleAstUsage, ImportKind, ImportRecordMeta, RUNTIME_MODULE_KEY, StmtInfoMeta,
   ThisExprReplaceKind, dynamic_import_usage::DynamicImportExportsUsage,
   generate_replace_this_expr_map,
 };
 #[cfg(debug_assertions)]
 use rolldown_ecmascript::ToSourceString;
+use rolldown_ecmascript_utils::ExpressionExt;
 use rolldown_error::BuildDiagnostic;
 use rolldown_std_utils::OptionExt;
 
@@ -67,6 +68,7 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
     }
 
     self.result.hashbang_range = program.hashbang.as_ref().map(GetSpan::span);
+    self.result.directive_range = program.directives.iter().map(GetSpan::span).collect();
     self.result.dynamic_import_rec_exports_usage =
       std::mem::take(&mut self.dynamic_import_usage_info.dynamic_import_exports_usage);
     if self.result.has_eval {
@@ -86,18 +88,10 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
     // https://github.com/evanw/esbuild/blob/d34e79e2a998c21bb71d57b92b0017ca11756912/internal/js_parser/js_parser.go#L12551-L12604
     // Since AstScan is immutable, we defer transformation in module finalizer
     if !self.top_level_this_expr_set.is_empty() {
-      if self.esm_export_keyword.is_none() {
-        self.ast_usage.insert(EcmaModuleAstUsage::ExportsRef);
-        self.result.this_expr_replace_map = generate_replace_this_expr_map(
-          &self.top_level_this_expr_set,
-          ThisExprReplaceKind::Exports,
-        );
-      } else {
-        self.result.this_expr_replace_map = generate_replace_this_expr_map(
-          &self.top_level_this_expr_set,
-          ThisExprReplaceKind::Undefined,
-        );
-      }
+      self.result.this_expr_replace_map = generate_replace_this_expr_map(
+        &self.top_level_this_expr_set,
+        ThisExprReplaceKind::Undefined,
+      );
     }
 
     // check if the module is a reexport cjs module e.g.
@@ -170,18 +164,19 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
   }
 
   fn visit_import_expression(&mut self, expr: &ast::ImportExpression<'ast>) {
-    if let ast::Expression::StringLiteral(request) = &expr.source {
-      let import_rec_idx = self.add_import_record(
-        request.value.as_str(),
-        ImportKind::DynamicImport,
-        expr.source.span(),
-        {
+    if let Some(request) = expr.source.as_static_module_request() {
+      let import_rec_idx =
+        self.add_import_record(request.as_str(), ImportKind::DynamicImport, expr.source.span(), {
           let mut meta = ImportRecordMeta::empty();
           meta.set(ImportRecordMeta::IS_TOP_LEVEL, self.is_root_scope());
           meta.set(ImportRecordMeta::IS_UNSPANNED_IMPORT, expr.source.span().is_empty());
+          if let Some(parent_kind) = self.visit_path.last() {
+            if self.is_root_scope() && matches!(parent_kind, AstKind::AwaitExpression(_)) {
+              meta.set(ImportRecordMeta::IS_TOP_LEVEL_AWAIT_DYNAMIC_IMPORT, true);
+            }
+          }
           meta
-        },
-      );
+        });
       self.init_dynamic_import_binding_usage_info(import_rec_idx);
       self.result.imports.insert(expr.span, import_rec_idx);
     }
@@ -323,7 +318,7 @@ impl<'me, 'ast: 'me> AstScanner<'me, 'ast> {
               _ => false,
             };
             // should not replace require in `runtime` code
-            if is_dummy_record && self.id.as_ref() != RUNTIME_MODULE_ID {
+            if is_dummy_record && self.id.as_ref() != RUNTIME_MODULE_KEY {
               let import_rec_idx = self.add_import_record(
                 "",
                 ImportKind::Require,

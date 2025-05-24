@@ -9,7 +9,7 @@ use crate::types::scan_stage_cache::ScanStageCache;
 use crate::utils::load_entry_module::load_entry_module;
 use arcstr::ArcStr;
 use oxc::semantic::{ScopeId, Scoping};
-use oxc::transformer::ReplaceGlobalDefinesConfig;
+use oxc::transformer_plugins::ReplaceGlobalDefinesConfig;
 use oxc_index::IndexVec;
 use rolldown_common::dynamic_import_usage::DynamicImportExportsUsage;
 use rolldown_common::side_effects::{DeterminedSideEffects, HookSideEffects};
@@ -17,8 +17,8 @@ use rolldown_common::{
   DUMMY_MODULE_IDX, EcmaRelated, EntryPoint, EntryPointKind, ExternalModule,
   ExternalModuleTaskResult, HybridIndexVec, ImportKind, ImportRecordIdx, ImportRecordMeta,
   ImporterRecord, Module, ModuleId, ModuleIdx, ModuleLoaderMsg, ModuleType, NormalModuleTaskResult,
-  RUNTIME_MODULE_ID, ResolvedId, RuntimeModuleBrief, RuntimeModuleTaskResult, StmtInfoIdx,
-  SymbolRefDb, SymbolRefDbForModule,
+  RUNTIME_MODULE_KEY, ResolvedId, RuntimeModuleBrief, RuntimeModuleTaskResult, StmtInfoIdx,
+  SymbolRef, SymbolRefDb, SymbolRefDbForModule,
 };
 use rolldown_error::{BuildDiagnostic, BuildResult};
 use rolldown_fs::OsFileSystem;
@@ -112,6 +112,7 @@ pub struct ModuleLoaderOutput {
   pub dynamic_import_exports_usage_map: FxHashMap<ModuleIdx, DynamicImportExportsUsage>,
   // Empty if it is a full scan
   pub new_added_modules_from_partial_scan: FxIndexSet<ModuleIdx>,
+  pub safely_merge_cjs_ns_map: FxHashMap<ModuleIdx, Vec<SymbolRef>>,
   pub cache: ScanStageCache,
 }
 
@@ -155,7 +156,7 @@ impl ModuleLoader {
       IntermediateNormalModules::new(is_full_scan, std::mem::take(&mut cache.importers));
     let runtime_id = intermediate_normal_modules.alloc_ecma_module_idx();
 
-    let remaining = if cache.module_id_to_idx.contains_key(RUNTIME_MODULE_ID) {
+    let remaining = if cache.module_id_to_idx.contains_key(RUNTIME_MODULE_KEY) {
       // the first alloc just want to allocate the runtime module id
       intermediate_normal_modules.reset_ecma_module_idx();
       0
@@ -163,7 +164,7 @@ impl ModuleLoader {
       let task = RuntimeModuleTask::new(runtime_id, tx.clone(), Arc::clone(&options));
 
       tokio::spawn(async { task.run() });
-      cache.module_id_to_idx.insert(RUNTIME_MODULE_ID.into(), VisitState::Seen(runtime_id));
+      cache.module_id_to_idx.insert(RUNTIME_MODULE_KEY.into(), VisitState::Seen(runtime_id));
       1
     };
 
@@ -294,9 +295,10 @@ impl ModuleLoader {
 
     let mut dynamic_import_entry_ids: FxHashMap<ModuleIdx, Vec<(ModuleIdx, StmtInfoIdx)>> =
       FxHashMap::default();
+
     let mut dynamic_import_exports_usage_pairs = vec![];
     let mut extra_entry_points = vec![];
-
+    let mut safely_merge_cjs_ns_map: FxHashMap<ModuleIdx, Vec<SymbolRef>> = FxHashMap::default();
     let mut runtime_brief: Option<RuntimeModuleBrief> = None;
     while self.remaining > 0 {
       let Some(msg) = self.rx.recv().await else {
@@ -310,7 +312,7 @@ impl ModuleLoader {
             resolved_deps,
             raw_import_records,
             warnings,
-          } = task_result;
+          } = *task_result;
           all_warnings.extend(warnings);
           let mut dynamic_import_rec_exports_usage = ecma_related
             .as_mut()
@@ -343,6 +345,9 @@ impl ModuleLoader {
                 Arc::clone(&user_defined_entries),
               )
             };
+            if raw_rec.meta.contains(ImportRecordMeta::SAFELY_MERGE_CJS_NS) {
+              safely_merge_cjs_ns_map.entry(idx).or_default().push(raw_rec.namespace_ref);
+            }
             // Dynamic imported module will be considered as an entry
             self.intermediate_normal_modules.importers[idx].push(ImporterRecord {
               kind: raw_rec.kind,
@@ -396,7 +401,7 @@ impl ModuleLoader {
             identifier_name,
             side_effects,
             need_renormalize_render_path,
-          } = task_result;
+          } = *task_result;
 
           self.symbol_ref_db.store_local_db(
             task_result.idx,
@@ -424,7 +429,7 @@ impl ModuleLoader {
             ast,
             raw_import_records,
             resolved_deps,
-          } = task_result;
+          } = *task_result;
           let mut import_records = IndexVec::with_capacity(raw_import_records.len());
 
           for (raw_rec, info) in raw_import_records.into_iter().zip(resolved_deps) {
@@ -474,7 +479,13 @@ impl ModuleLoader {
           self.remaining -= 1;
         }
         ModuleLoaderMsg::FetchModule(resolve_id) => {
-          self.try_spawn_new_task(resolve_id, None, false, None, Arc::clone(&user_defined_entries));
+          self.try_spawn_new_task(
+            *resolve_id,
+            None,
+            false,
+            None,
+            Arc::clone(&user_defined_entries),
+          );
         }
         ModuleLoaderMsg::AddEntryModule(msg) => {
           let data = msg.chunk;
@@ -661,6 +672,7 @@ impl ModuleLoader {
       dynamic_import_exports_usage_map,
       new_added_modules_from_partial_scan: self.new_added_modules_from_partial_scan,
       cache: self.cache,
+      safely_merge_cjs_ns_map,
     })
   }
 

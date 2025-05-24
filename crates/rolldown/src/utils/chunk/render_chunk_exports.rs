@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
+use itertools::Itertools;
 use rolldown_common::{
   Chunk, ChunkKind, EntryPointKind, ExportsKind, IndexModules, ModuleIdx, NormalizedBundlerOptions,
   OutputExports, OutputFormat, SymbolRef, SymbolRefDb, WrapKind,
@@ -11,6 +12,7 @@ use rolldown_utils::{
   ecmascript::{property_access_str, to_module_import_export_name},
   indexmap::FxIndexSet,
 };
+use rustc_hash::FxHashSet;
 
 use crate::{stages::link_stage::LinkStageOutput, types::generator::GenerateContext};
 
@@ -87,7 +89,11 @@ pub fn render_chunk_exports(
   export_mode: Option<&OutputExports>,
 ) -> Option<String> {
   let GenerateContext { chunk, link_output, options, .. } = ctx;
-  let export_items = get_export_items(chunk, link_output).into_iter().collect::<Vec<_>>();
+  let export_items: Vec<(Rstr, SymbolRef)> = ctx.render_export_items_index_vec[ctx.chunk_idx]
+    .clone()
+    .into_iter()
+    .flat_map(|(symbol_ref, names)| names.into_iter().map(|name| (name, symbol_ref)).collect_vec())
+    .collect();
 
   match options.format {
     OutputFormat::Esm => {
@@ -185,7 +191,8 @@ pub fn render_chunk_exports(
                       concat_string!(
                         property_access_str("exports", exported_name.as_str()),
                         " = ",
-                        exported_value.as_str()
+                        exported_value.as_str(),
+                        ";"
                       )
                     }
                   }
@@ -210,6 +217,21 @@ pub fn render_chunk_exports(
             .iter()
             .map(|rec_idx| module.ecma_view.import_records[*rec_idx].resolved_module)
             .collect::<FxIndexSet<ModuleIdx>>();
+
+          // Track already imported external modules to avoid duplicates
+          // First check if any of these external modules have already been imported elsewhere in the chunk
+          let mut imported_external_modules: FxHashSet<SymbolRef> = ctx
+            .chunk
+            .imports_from_external_modules
+            .iter()
+            .map(|(idx, _)| {
+              let external = &ctx.link_output.module_table.modules[*idx]
+                .as_external()
+                .expect("Should be external module here");
+              external.namespace_ref
+            })
+            .collect();
+
           external_modules.iter().for_each(|idx| {
           let external = &ctx.link_output.module_table.modules[*idx].as_external().expect("Should be external module here");
           let binding_ref_name =
@@ -222,7 +244,11 @@ pub fn render_chunk_exports(
   });
 });\n".replace("$NAME", binding_ref_name);
 
-          write!(s, "\nvar {} = require(\"{}\");\n", binding_ref_name, &external.get_import_path(chunk)).unwrap();
+          s.push('\n');
+          // Only generate require statement if this external module hasn't been imported yet
+          if imported_external_modules.insert(external.namespace_ref) {
+            writeln!(s, "var {} = require(\"{}\");", binding_ref_name, &external.get_import_path(chunk)).unwrap();
+          }
           s.push_str(&import_stmt);
         });
         }
@@ -276,34 +302,52 @@ pub fn render_object_define_property(key: &str, value: &str) -> String {
   )
 }
 
-pub fn get_export_items(chunk: &Chunk, graph: &LinkStageOutput) -> Vec<(Rstr, SymbolRef)> {
+pub fn get_export_items(
+  chunk: &Chunk,
+  graph: &LinkStageOutput,
+  options: &NormalizedBundlerOptions,
+) -> Vec<(Rstr, SymbolRef)> {
+  let get_exports_items_from_common_chunk = |chunk: &Chunk| {
+    let mut tmp = chunk
+      .exports_to_other_chunks
+      .iter()
+      .map(|(export_ref, alias)| (alias.clone(), *export_ref))
+      .collect::<Vec<_>>();
+
+    tmp.sort_unstable_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+
+    tmp
+  };
+
   match chunk.kind {
-    ChunkKind::EntryPoint { module, is_user_defined, .. } => {
-      let meta = &graph.metas[module];
+    ChunkKind::EntryPoint { module: module_idx, is_user_defined, .. } => {
+      let module =
+        graph.module_table.modules[module_idx].as_normal().expect("should be normal module");
+      // Check if the module is dynamically imported. This ensures that entry points with
+      // dynamic import references are not folded into a common chunk when `preserveModules` is enabled.
+      let is_dynamic_imported = !module.ecma_view.dynamic_importers.is_empty();
+      if options.preserve_modules && !is_user_defined && !is_dynamic_imported {
+        return get_exports_items_from_common_chunk(chunk);
+      }
+      let meta = &graph.metas[module_idx];
       meta
         .referenced_canonical_exports_symbols(
-          module,
+          module_idx,
           if is_user_defined { EntryPointKind::UserDefined } else { EntryPointKind::DynamicImport },
           &graph.dynamic_import_exports_usage_map,
         )
         .map(|(name, export)| (name.clone(), export.symbol_ref))
         .collect::<Vec<_>>()
     }
-    ChunkKind::Common => {
-      let mut tmp = chunk
-        .exports_to_other_chunks
-        .iter()
-        .map(|(export_ref, alias)| (alias.clone(), *export_ref))
-        .collect::<Vec<_>>();
-
-      tmp.sort_unstable_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-
-      tmp
-    }
+    ChunkKind::Common => get_exports_items_from_common_chunk(chunk),
   }
 }
 
-pub fn get_chunk_export_names(chunk: &Chunk, graph: &LinkStageOutput) -> Vec<Rstr> {
+pub fn get_chunk_export_names(
+  chunk: &Chunk,
+  graph: &LinkStageOutput,
+  options: &NormalizedBundlerOptions,
+) -> Vec<Rstr> {
   if let ChunkKind::EntryPoint { module: entry_id, .. } = &chunk.kind {
     let entry_meta = &graph.metas[*entry_id];
     if matches!(entry_meta.wrap_kind, WrapKind::Cjs) {
@@ -311,10 +355,21 @@ pub fn get_chunk_export_names(chunk: &Chunk, graph: &LinkStageOutput) -> Vec<Rst
     }
   }
 
-  get_export_items(chunk, graph)
+  get_export_items(chunk, graph, options)
     .into_iter()
     .map(|(exported_name, _)| exported_name)
     .collect::<Vec<_>>()
+}
+
+pub fn get_chunk_export_names_with_ctx(ctx: &GenerateContext<'_>) -> Vec<Rstr> {
+  let GenerateContext { chunk, link_output, render_export_items_index_vec, .. } = ctx;
+  if let ChunkKind::EntryPoint { module: entry_id, .. } = &chunk.kind {
+    let entry_meta = &link_output.metas[*entry_id];
+    if matches!(entry_meta.wrap_kind, WrapKind::Cjs) {
+      return vec![Rstr::new("default")];
+    }
+  }
+  render_export_items_index_vec[ctx.chunk_idx].values().flatten().cloned().collect::<Vec<_>>()
 }
 
 fn must_keep_live_binding(

@@ -2,16 +2,20 @@ use rolldown_utils::indexmap::FxIndexMap;
 use rustc_hash::FxHashMap;
 use std::{fmt::Debug, path::PathBuf};
 use types::advanced_chunks_options::AdvancedChunksOptions;
-use types::comments::Comments;
 use types::debug_options::DebugOptions;
 use types::inject_import::InjectImport;
 use types::invalidate_js_side_cache::InvalidateJsSideCache;
 use types::jsx::Jsx;
+use types::legal_comments::LegalComments;
+use types::log_level::LogLevel;
 use types::make_absolute_externals_relative::MakeAbsoluteExternalsRelative;
+use types::mark_module_loaded::MarkModuleLoaded;
 use types::minify_options::RawMinifyOptions;
-use types::output_option::{AssetFilenamesOutputOption, GlobalsOutputOption};
+use types::on_log::OnLog;
+use types::output_option::{
+  AssetFilenamesOutputOption, GlobalsOutputOption, PreserveEntrySignatures,
+};
 use types::sanitize_filename::SanitizeFilename;
-use types::target::ESTarget;
 use types::watch_option::WatchOption;
 
 #[cfg(feature = "deserialize_bundler_options")]
@@ -169,7 +173,7 @@ pub struct BundlerOptions {
   #[cfg_attr(
     feature = "deserialize_bundler_options",
     serde(deserialize_with = "deserialize_jsx", default),
-    schemars(with = "Option<FxHashMap<String, String>>")
+    schemars(with = "Option<Value>")
   )]
   pub jsx: Option<Jsx>,
   #[cfg_attr(
@@ -179,8 +183,8 @@ pub struct BundlerOptions {
   )]
   pub transform: Option<oxc::transformer::TransformOptions>,
   pub watch: Option<WatchOption>,
-  pub comments: Option<Comments>,
-  pub target: Option<ESTarget>,
+  pub legal_comments: Option<LegalComments>,
+  pub target: Option<Vec<String>>,
   pub polyfill_require: Option<bool>,
 
   #[cfg_attr(
@@ -197,8 +201,24 @@ pub struct BundlerOptions {
     schemars(skip)
   )]
   pub invalidate_js_side_cache: Option<InvalidateJsSideCache>,
+  #[cfg_attr(
+    feature = "deserialize_bundler_options",
+    serde(default, skip_deserializing),
+    schemars(skip)
+  )]
+  pub mark_module_loaded: Option<MarkModuleLoaded>,
+  pub log_level: Option<LogLevel>,
+  #[cfg_attr(
+    feature = "deserialize_bundler_options",
+    serde(default, skip_deserializing),
+    schemars(skip)
+  )]
+  pub on_log: Option<OnLog>,
+  pub preserve_modules: Option<bool>,
+  pub virtual_dirname: Option<String>,
+  pub preserve_modules_root: Option<String>,
+  pub preserve_entry_signatures: Option<PreserveEntrySignatures>,
 }
-
 impl BundlerOptions {
   /// # Panic
   /// 1. If `cwd` is not set.
@@ -350,6 +370,7 @@ where
   let value = Option::<Value>::deserialize(deserializer)?;
   match value {
     None => Ok(Some(Jsx::default())),
+    Some(Value::String(str)) if str == "preserve" => Ok(Some(Jsx::Preserve)),
     Some(Value::Object(obj)) => {
       let mut default_jsx_option = JsxOptions::default();
       for (k, v) in obj {
@@ -396,6 +417,6 @@ where
 
       Ok(Some(Jsx::Enable(default_jsx_option)))
     }
-    _ => Err(serde::de::Error::custom("jsx should be an object")),
+    _ => Err(serde::de::Error::custom("jsx should be either an object or `preserve`")),
   }
 }

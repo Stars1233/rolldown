@@ -11,15 +11,14 @@ class A {
   constructor() {
 (function(exports) {
 
-"use strict";
 
 //#region main.js
 const a = 1;
 const b = 2;
 
 //#endregion
-exports.a = a
-exports.b = b
+exports.a = a;
+exports.b = b;
 })(this.module = this.module || {});
   }
 }

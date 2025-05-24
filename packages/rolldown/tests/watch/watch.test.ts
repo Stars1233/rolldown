@@ -161,6 +161,89 @@ test.sequential('watch event', async () => {
   })
 })
 
+test.sequential('watch event off', async () => {
+  const { input, outputDir } = await createTestInputAndOutput('watch-event-off')
+  const watcher = watch({
+    input,
+    output: { dir: outputDir },
+    watch: {
+      buildDelay: 50,
+    },
+  })
+  const eventFn = vi.fn()
+  watcher.on('event', eventFn)
+  await waitBuildFinished(watcher)
+  expect(eventFn).toHaveBeenCalled()
+
+  eventFn.mockClear()
+  watcher.off('event', eventFn);
+
+  fs.writeFileSync(input, 'console.log(12)')
+  await waitBuildFinished(watcher)
+  expect(eventFn).not.toHaveBeenCalled()
+
+  await watcher.close()
+})
+
+test.sequential('watch BUNDLE_END event result.close() + closeBundle', async () => {
+  const { input, outputDir } = await createTestInputAndOutput('watch-event-close-closeBundle')
+  const closeBundleFn = vi.fn()
+  const watcher = watch({
+    input,
+    output: { dir: outputDir },
+    plugins: [
+      {
+        name: 'test',
+        closeBundle: closeBundleFn
+      }
+    ]
+  })
+  watcher.on('event', async (event) => {
+    if (event.code === 'BUNDLE_END') {
+      await event.result.close()
+    }
+  })
+  await waitBuildFinished(watcher)
+
+  expect(closeBundleFn).toBeCalledTimes(1)
+
+  // The `result.close` could be call multiply times.
+  fs.writeFileSync(input, 'console.log(3)')
+  await waitBuildFinished(watcher)
+  expect(closeBundleFn).toBeCalledTimes(2)
+
+  await watcher.close()
+})
+
+test.sequential('watch ERROR event result.close() + closeBundle', async () => {
+  const { input, outputDir } = await createTestInputAndOutput('watch-event-ERROR-close-closeBundle')
+  const closeBundleFn = vi.fn()
+  const watcher = watch({
+    input,
+    output: { dir: outputDir },
+    plugins: [
+      {
+        name: 'test',
+        buildStart() {
+          throw new Error('test error')
+        },
+        closeBundle: closeBundleFn
+      }
+    ]
+  })
+  watcher.on('event', async (event) => {
+    if (event.code === 'ERROR') {
+      await event.result.close()
+    }
+  })
+
+  await waitUtil(() => {
+    expect(closeBundleFn).toBeCalledTimes(2) // build error call once + result.close() call once
+  })
+
+  await watcher.close()
+})
+
 test.sequential('watch BUNDLE_END event output + "file" option', async () => {
   const { input, output } = await createTestInputAndOutput('watch-event')
   const watcher = watch({
@@ -496,6 +579,36 @@ test.sequential('warning for multiply notify options', async () => {
 
   await watcher.close()
 })
+
+if (process.platform === 'win32') {
+  test.sequential('watch linux path at windows #4385', async () => {
+    const { input, output } = await createTestInputAndOutput('watch-linux-path-at-windows')
+    const watcher = watch({
+      input,
+      output: { file: output },
+      plugins: [
+        {
+          name: 'test',
+          resolveId() {
+            return input.replace(/\\/g, '/');
+          },
+        },
+      ],
+    })
+    // should run build once
+    await waitBuildFinished(watcher)
+  
+    // edit file
+    fs.writeFileSync(input, 'console.log(2)')
+    await waitUtil(() => {
+      expect(fs.readFileSync(output, 'utf-8').includes('console.log(2)')).toBe(
+        true,
+      )
+    })
+  
+    await watcher.close()
+  })
+}
 
 test.sequential('watch close immediately', async () => {
   const { input, output } = await createTestInputAndOutput(

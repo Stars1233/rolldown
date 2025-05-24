@@ -68,7 +68,7 @@ function requireNative() {
     try {
       nativeBinding = require(process.env.NAPI_RS_NATIVE_LIBRARY_PATH);
     } catch (err) {
-      loadErrors.push(err);
+      loadErrors.push(err)
     }
   } else if (process.platform === 'android') {
     if (process.arch === 'arm64') {
@@ -374,7 +374,9 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
+module.exports = nativeBinding
 module.exports.BindingBundleEndEventData = nativeBinding.BindingBundleEndEventData
+module.exports.BindingBundleErrorEventData = nativeBinding.BindingBundleErrorEventData
 module.exports.BindingCallableBuiltinPlugin = nativeBinding.BindingCallableBuiltinPlugin
 module.exports.BindingError = nativeBinding.BindingError
 module.exports.BindingModuleInfo = nativeBinding.BindingModuleInfo
@@ -393,13 +395,16 @@ module.exports.BindingWatcherEvent = nativeBinding.BindingWatcherEvent
 module.exports.Bundler = nativeBinding.Bundler
 module.exports.ParallelJsPluginRegistry = nativeBinding.ParallelJsPluginRegistry
 module.exports.ParseResult = nativeBinding.ParseResult
+module.exports.ResolverFactory = nativeBinding.ResolverFactory
 module.exports.BindingBuiltinPluginName = nativeBinding.BindingBuiltinPluginName
 module.exports.BindingHookSideEffects = nativeBinding.BindingHookSideEffects
 module.exports.BindingLogLevel = nativeBinding.BindingLogLevel
 module.exports.BindingPluginOrder = nativeBinding.BindingPluginOrder
+module.exports.EnforceExtension = nativeBinding.EnforceExtension
 module.exports.ExportExportNameKind = nativeBinding.ExportExportNameKind
 module.exports.ExportImportNameKind = nativeBinding.ExportImportNameKind
 module.exports.ExportLocalNameKind = nativeBinding.ExportLocalNameKind
+module.exports.FilterTokenKind = nativeBinding.FilterTokenKind
 module.exports.getBufferOffset = nativeBinding.getBufferOffset
 module.exports.HelperMode = nativeBinding.HelperMode
 module.exports.ImportNameKind = nativeBinding.ImportNameKind
@@ -413,4 +418,5 @@ module.exports.registerPlugins = nativeBinding.registerPlugins
 module.exports.Severity = nativeBinding.Severity
 module.exports.shutdownAsyncRuntime = nativeBinding.shutdownAsyncRuntime
 module.exports.startAsyncRuntime = nativeBinding.startAsyncRuntime
+module.exports.sync = nativeBinding.sync
 module.exports.transform = nativeBinding.transform

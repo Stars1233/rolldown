@@ -1,8 +1,8 @@
 import {
-  instantiateNapiModule as __emnapiInstantiateNapiModule,
-  getDefaultContext as __emnapiGetDefaultContext,
-  WASI as __WASI,
   createOnMessage as __wasmCreateOnMessageForFsProxy,
+  getDefaultContext as __emnapiGetDefaultContext,
+  instantiateNapiModule as __emnapiInstantiateNapiModule,
+  WASI as __WASI,
 } from '@napi-rs/wasm-runtime'
 import { memfs } from '@napi-rs/wasm-runtime/fs'
 import __wasmUrl from './rolldown-binding.wasm32-wasi.wasm?url'
@@ -60,7 +60,9 @@ const {
     }
   },
 })
+export default __napiModule.exports
 export const BindingBundleEndEventData = __napiModule.exports.BindingBundleEndEventData
+export const BindingBundleErrorEventData = __napiModule.exports.BindingBundleErrorEventData
 export const BindingCallableBuiltinPlugin = __napiModule.exports.BindingCallableBuiltinPlugin
 export const BindingError = __napiModule.exports.BindingError
 export const BindingModuleInfo = __napiModule.exports.BindingModuleInfo
@@ -79,13 +81,16 @@ export const BindingWatcherEvent = __napiModule.exports.BindingWatcherEvent
 export const Bundler = __napiModule.exports.Bundler
 export const ParallelJsPluginRegistry = __napiModule.exports.ParallelJsPluginRegistry
 export const ParseResult = __napiModule.exports.ParseResult
+export const ResolverFactory = __napiModule.exports.ResolverFactory
 export const BindingBuiltinPluginName = __napiModule.exports.BindingBuiltinPluginName
 export const BindingHookSideEffects = __napiModule.exports.BindingHookSideEffects
 export const BindingLogLevel = __napiModule.exports.BindingLogLevel
 export const BindingPluginOrder = __napiModule.exports.BindingPluginOrder
+export const EnforceExtension = __napiModule.exports.EnforceExtension
 export const ExportExportNameKind = __napiModule.exports.ExportExportNameKind
 export const ExportImportNameKind = __napiModule.exports.ExportImportNameKind
 export const ExportLocalNameKind = __napiModule.exports.ExportLocalNameKind
+export const FilterTokenKind = __napiModule.exports.FilterTokenKind
 export const getBufferOffset = __napiModule.exports.getBufferOffset
 export const HelperMode = __napiModule.exports.HelperMode
 export const ImportNameKind = __napiModule.exports.ImportNameKind
@@ -99,4 +104,5 @@ export const registerPlugins = __napiModule.exports.registerPlugins
 export const Severity = __napiModule.exports.Severity
 export const shutdownAsyncRuntime = __napiModule.exports.shutdownAsyncRuntime
 export const startAsyncRuntime = __napiModule.exports.startAsyncRuntime
+export const sync = __napiModule.exports.sync
 export const transform = __napiModule.exports.transform

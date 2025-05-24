@@ -46,6 +46,7 @@ use crate::{
 };
 
 mod advanced_chunks;
+mod chunk_ext;
 mod code_splitting;
 mod compute_cross_chunk_links;
 mod minify_assets;
@@ -71,6 +72,7 @@ impl<'a> GenerateStage<'a> {
     self.plugin_driver.render_start(self.options).await?;
 
     let mut chunk_graph = self.generate_chunks().await;
+
     if chunk_graph.chunk_table.len() > 1 {
       validate_options_for_multi_chunk_output(self.options)?;
     }
@@ -196,7 +198,9 @@ impl<'a> GenerateStage<'a> {
         match chunk.kind {
           ChunkKind::EntryPoint { module: entry_module_id, is_user_defined, .. } => {
             let module = &modules[entry_module_id];
-            let generated = if is_user_defined {
+            let generated = if self.options.preserve_modules {
+              sanitize_filename.call(&module.id().as_path().representative_file_name(true)).await?
+            } else if is_user_defined {
               // try extract meaningful input name from path
               if let Some(file_stem) = module.id().as_path().file_stem().and_then(|f| f.to_str()) {
                 sanitize_filename.call(file_stem).await?
@@ -204,7 +208,7 @@ impl<'a> GenerateStage<'a> {
                 arcstr::literal!("input")
               }
             } else {
-              sanitize_filename.call(&module.id().as_path().representative_file_name()).await?
+              sanitize_filename.call(&module.id().as_path().representative_file_name(false)).await?
             };
             Ok(generated)
           }
@@ -215,7 +219,11 @@ impl<'a> GenerateStage<'a> {
               chunk.modules.iter().rev().find(|each| **each != self.link_output.runtime.id())
             {
               let module = &modules[*module_id];
-              Ok(sanitize_filename.call(&module.id().as_path().representative_file_name()).await?)
+              Ok(
+                sanitize_filename
+                  .call(&module.id().as_path().representative_file_name(false))
+                  .await?,
+              )
             } else {
               Ok(arcstr::literal!("chunk"))
             }
@@ -242,7 +250,7 @@ impl<'a> GenerateStage<'a> {
       // Notice we didn't used deconflict name here, chunk names are allowed to be duplicated.
       chunk.name = Some(pre_generated_chunk_name.clone());
       index_chunk_id_to_name.insert(*chunk_id, pre_generated_chunk_name.clone());
-      let pre_rendered_chunk = generate_pre_rendered_chunk(chunk, self.link_output);
+      let pre_rendered_chunk = generate_pre_rendered_chunk(chunk, self.link_output, self.options);
 
       let preliminary_filename = chunk
         .generate_preliminary_filename(

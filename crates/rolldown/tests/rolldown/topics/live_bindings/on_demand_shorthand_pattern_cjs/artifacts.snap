@@ -6,7 +6,6 @@ source: crates/rolldown_testing/src/integration_test.rs
 ## main.js
 
 ```js
-"use strict";
 
 //#region main.js
 const short1 = "";
@@ -31,8 +30,8 @@ Object.defineProperty(exports, 'nonShort2', {
     return nonShort2;
   }
 });
-exports.short1 = short1
-exports.short2 = short2
-exports.short3 = short3
-exports.short4 = short4
+exports.short1 = short1;
+exports.short2 = short2;
+exports.short3 = short3;
+exports.short4 = short4;
 ```

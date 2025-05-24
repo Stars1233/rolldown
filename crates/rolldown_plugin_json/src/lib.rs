@@ -33,8 +33,10 @@ impl Plugin for JsonPlugin {
     _ctx: rolldown_plugin::SharedTransformPluginContext,
     args: &rolldown_plugin::HookTransformArgs<'_>,
   ) -> rolldown_plugin::HookTransformReturn {
-    // Not sure we should use `module_type` to filter, but for now prefer to follow vite behavior
-    if !utils::is_json_ext(args.id) || utils::is_special_query(args.id) {
+    if *args.module_type != ModuleType::Json
+      || !utils::is_json_ext(args.id)
+      || utils::is_special_query(args.id)
+    {
       return Ok(None);
     }
 
@@ -75,7 +77,6 @@ impl Plugin for JsonPlugin {
   }
 
   fn register_hook_usage(&self) -> rolldown_plugin::HookUsage {
-    // TODO: get hook usage from option
-    HookUsage::all()
+    HookUsage::Transform
   }
 }

@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
 use arcstr::ArcStr;
-use itertools::Either;
 use oxc::{
   allocator::Allocator,
   ast::{AstBuilder, ast::Program},
-  codegen::{CodeGenerator, Codegen, CodegenOptions, CodegenReturn, LegalComment},
+  codegen::{Codegen, CodegenOptions, CodegenReturn, LegalComment},
   mangler::Mangler,
   minifier::{CompressOptions, Compressor, MinifierOptions, MinifierReturn},
   parser::{ParseOptions, Parser},
@@ -43,7 +42,7 @@ impl EcmaCompiler {
           Ok(ProgramCellDependent { program: ret.program })
         }
       })?;
-    Ok(EcmaAst { program: inner, source_type: ty, contains_use_strict: false })
+    Ok(EcmaAst { program: inner, source_type: ty })
   }
 
   pub fn parse_expr_as_program(
@@ -79,34 +78,26 @@ impl EcmaCompiler {
           )),
         }
       })?;
-    Ok(EcmaAst { program: inner, source_type: ty, contains_use_strict: false })
-  }
-
-  pub fn print(ast: &EcmaAst, filename: &str, enable_source_map: bool) -> CodegenReturn {
-    CodeGenerator::new()
-      .with_options(CodegenOptions {
-        comments: true,
-        source_map_path: enable_source_map.then(|| PathBuf::from(filename)),
-        ..CodegenOptions::default()
-      })
-      .build(ast.program())
+    Ok(EcmaAst { program: inner, source_type: ty })
   }
 
   pub fn print_with(ast: &EcmaAst, options: PrintOptions) -> CodegenReturn {
-    let (is_print_full_comments, legal_comments) = match options.comments {
-      Either::Left(value) => (value, LegalComment::None),
-      Either::Right(value) => (false, value),
-    };
-    CodeGenerator::new()
+    let legal_comments =
+      if options.print_legal_comments { LegalComment::Inline } else { LegalComment::None };
+    Codegen::new()
       .with_options(CodegenOptions {
-        comments: is_print_full_comments,
-        source_map_path: options.sourcemap.then(|| PathBuf::from(options.filename)),
+        comments: false,
+        // This option will be configurable when we begin to support `ignore-annotations`
+        // https://esbuild.github.io/api/#ignore-annotations
+        annotation_comments: true,
         legal_comments,
+        source_map_path: options.sourcemap.then(|| PathBuf::from(options.filename)),
         ..CodegenOptions::default()
       })
       .build(ast.program())
   }
 
+  #[allow(clippy::needless_pass_by_value)] // hyf0: Seems a bug of clippy. `codegen_options` is indeed used as value.
   pub fn minify(
     source_text: &str,
     enable_sourcemap: bool,
@@ -114,6 +105,7 @@ impl EcmaCompiler {
     minifier_options: MinifierOptions,
     run_compress: bool,
     codegen_options: CodegenOptions,
+    print_legal_comments: bool,
   ) -> (String, Option<SourceMap>) {
     let allocator = Allocator::default();
     let program =
@@ -122,6 +114,12 @@ impl EcmaCompiler {
     let ret = Self::minify_impl(minifier_options, run_compress, &allocator, program);
     let ret = Codegen::new()
       .with_options(CodegenOptions {
+        comments: false,
+        legal_comments: if print_legal_comments {
+          LegalComment::Inline
+        } else {
+          LegalComment::None
+        },
         source_map_path: enable_sourcemap.then(|| PathBuf::from(filename)),
         ..codegen_options
       })
@@ -149,12 +147,13 @@ impl EcmaCompiler {
       Compressor::new(allocator, CompressOptions::safest()).dead_code_elimination(program);
     }
     let scoping = options.mangle.map(|options| {
-      let semantic = SemanticBuilder::new()
+      let mut semantic = SemanticBuilder::new()
         .with_stats(stats)
         .with_scope_tree_child_ids(true)
         .build(program)
         .semantic;
-      Mangler::default().with_options(options).build_with_semantic(semantic, program)
+      Mangler::default().with_options(options).build_with_semantic(&mut semantic, program);
+      semantic.into_scoping()
     });
     MinifierReturn { scoping }
   }
@@ -163,12 +162,13 @@ impl EcmaCompiler {
 #[test]
 fn basic_test() {
   let ast = EcmaCompiler::parse("", "const a = 1;".to_string(), SourceType::default()).unwrap();
-  let code = EcmaCompiler::print(&ast, "", false).code;
+  let code = EcmaCompiler::print_with(&ast, PrintOptions::default()).code;
   assert_eq!(code, "const a = 1;\n");
 }
+#[derive(Debug, Default)]
 
 pub struct PrintOptions {
-  pub comments: Either</* is print full comments */ bool, LegalComment>,
+  pub print_legal_comments: bool,
   pub filename: String,
   pub sourcemap: bool,
 }

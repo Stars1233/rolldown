@@ -1,10 +1,11 @@
 use oxc::{
-  allocator::{Dummy, IntoIn},
-  ast::{NONE, ast},
+  ast::{
+    NONE,
+    ast::{self, PropertyKind},
+  },
   span::SPAN,
 };
-use rolldown_ecmascript_utils::{ExpressionExt, quote_stmt};
-use rolldown_utils::ecmascript::is_validate_identifier_name;
+use rolldown_ecmascript_utils::ExpressionExt;
 
 use super::ScopeHoistingFinalizer;
 
@@ -16,12 +17,14 @@ impl<'ast> ScopeHoistingFinalizer<'_, 'ast> {
     }
 
     // `import.meta.hot = __rolldown_runtime__.createModuleHotContext(moduleId);`
-    ret.push(self.generate_stmt_of_init_module_hot_context());
+    let hot_name = self.canonical_name_for(self.ctx.module.ecma_view.hmr_hot_ref.unwrap());
+    ret.push(self.snippet.stmt_of_init_module_hot_context(hot_name, &self.ctx.module.stable_id));
 
     ret.extend(self.generate_runtime_module_register_for_hmr());
 
     ret
   }
+
   fn generate_runtime_module_register_for_hmr(&self) -> Vec<ast::Statement<'ast>> {
     let mut ret = vec![];
     if !self.ctx.options.is_hmr_enabled() {
@@ -30,42 +33,36 @@ impl<'ast> ScopeHoistingFinalizer<'_, 'ast> {
 
     let module_exports = match self.ctx.module.exports_kind {
       rolldown_common::ExportsKind::Esm => {
-        // TODO: Still we could reuse use module namespace def
+        let binding_name_for_namespace_object_ref =
+          self.canonical_name_for(self.ctx.module.namespace_object_ref);
 
-        // Empty object `{}`
-        let mut arg_obj_expr =
-          self.snippet.builder.alloc_object_expression(SPAN, self.snippet.builder.vec());
+        // Add __esModule flag
+        ret.push(self.snippet.builder.statement_expression(
+          SPAN,
+          self.snippet.call_expr_with_arg_expr(
+            self.snippet.id_ref_expr("__rolldown_runtime__.__toCommonJS", SPAN),
+            self.snippet.id_ref_expr(binding_name_for_namespace_object_ref.as_str(), SPAN),
+            false,
+          ),
+        ));
 
-        self.ctx.linking_info.canonical_exports().for_each(|(export, resolved_export)| {
-          // prop_name: () => returned
-          let prop_name = export;
-          let returned =
-            self.finalized_expr_for_symbol_ref(resolved_export.symbol_ref, false, None);
-          arg_obj_expr.properties.push(ast::ObjectPropertyKind::ObjectProperty(
-            ast::ObjectProperty {
-              key: if is_validate_identifier_name(prop_name) {
-                ast::PropertyKey::StaticIdentifier(
-                  self.snippet.id_name(prop_name, SPAN).into_in(self.alloc),
-                )
-              } else {
-                ast::PropertyKey::StringLiteral(self.snippet.alloc_string_literal(prop_name, SPAN))
-              },
-              value: self.snippet.only_return_arrow_expr(returned),
-              ..ast::ObjectProperty::dummy(self.alloc)
-            }
-            .into_in(self.alloc),
-          ));
-        });
-        ast::Argument::ObjectExpression(arg_obj_expr)
+        // { exports: namespace }
+        ast::Argument::ObjectExpression(self.snippet.builder.alloc_object_expression(
+          SPAN,
+          self.snippet.builder.vec1(self.snippet.builder.object_property_kind_object_property(
+            SPAN,
+            PropertyKind::Init,
+            self.snippet.builder.property_key_static_identifier(SPAN, "exports"),
+            self.snippet.id_ref_expr(binding_name_for_namespace_object_ref, SPAN),
+            true,
+            false,
+            false,
+          )),
+        ))
       }
       rolldown_common::ExportsKind::CommonJs => {
-        // `module.exports`
-        ast::Argument::StaticMemberExpression(self.snippet.builder.alloc_static_member_expression(
-          SPAN,
-          self.snippet.id_ref_expr("module", SPAN),
-          self.snippet.id_name("exports", SPAN),
-          false,
-        ))
+        // `module`
+        ast::Argument::Identifier(self.snippet.builder.alloc_identifier_reference(SPAN, "module"))
       }
       rolldown_common::ExportsKind::None => ast::Argument::ObjectExpression(
         // `{}`
@@ -73,36 +70,15 @@ impl<'ast> ScopeHoistingFinalizer<'_, 'ast> {
       ),
     };
 
-    // __rolldown_runtime__.register(moduleId, module)
-    let mut arguments = self.snippet.builder.vec_from_array([
+    // __rolldown_runtime__.registerModule(moduleId, module)
+    let arguments = self.snippet.builder.vec_from_array([
       ast::Argument::StringLiteral(self.snippet.builder.alloc_string_literal(
         SPAN,
-        &self.ctx.module.stable_id,
+        self.snippet.builder.atom(&self.ctx.module.stable_id),
         None,
       )),
       module_exports,
     ]);
-
-    if self.ctx.module.exports_kind.is_commonjs() {
-      // __rolldown_runtime__.register(moduleId, module, { cjs: true })
-      arguments.push(ast::Argument::ObjectExpression(
-        self.snippet.builder.alloc_object_expression(
-          SPAN,
-          self.snippet.builder.vec1(ast::ObjectPropertyKind::ObjectProperty(
-            ast::ObjectProperty {
-              key: ast::PropertyKey::StaticIdentifier(
-                self.snippet.id_name("cjs", SPAN).into_in(self.alloc),
-              ),
-              value: ast::Expression::BooleanLiteral(
-                self.snippet.builder.alloc_boolean_literal(SPAN, true),
-              ),
-              ..ast::ObjectProperty::dummy(self.alloc)
-            }
-            .into_in(self.alloc),
-          )),
-        ),
-      ));
-    }
 
     let register_call = self.snippet.builder.alloc_call_expression(
       SPAN,
@@ -122,16 +98,13 @@ impl<'ast> ScopeHoistingFinalizer<'_, 'ast> {
     ret
   }
 
-  pub fn generate_stmt_of_init_module_hot_context(&self) -> ast::Statement<'ast> {
-    // import.meta.hot = __rolldown_runtime__.createModuleHotContext(moduleId);
-    let stmt = quote_stmt(
-      self.alloc,
-      &format!(
-        "import.meta.hot = __rolldown_runtime__.createModuleHotContext({:?});",
-        self.ctx.module.stable_id
-      ),
-    );
-    stmt
+  pub fn rewrite_import_meta_hot(&self, expr: &mut ast::Expression<'ast>) {
+    if expr.is_import_meta_hot() {
+      if let Some(hmr_hot_ref) = self.ctx.module.ecma_view.hmr_hot_ref {
+        let hot_name = self.canonical_name_for(hmr_hot_ref);
+        *expr = self.snippet.id_ref_expr(hot_name, SPAN);
+      }
+    }
   }
 
   pub fn rewrite_hot_accept_call_deps(&self, call_expr: &mut ast::CallExpression<'ast>) {

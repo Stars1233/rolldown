@@ -29,7 +29,7 @@ pub type SanitizeFileName = Either<bool, JsCallback<FnArgs<(String,)>, String>>;
 
 #[napi(object, object_to_js = false)]
 #[derive(Debug)]
-pub struct BindingOutputOptions {
+pub struct BindingOutputOptions<'env> {
   // --- Options Rolldown doesn't need to be supported
   // /** @deprecated Use the "renderDynamicImport" plugin hook instead. */
   // dynamicImportFunction: string | undefined;
@@ -94,7 +94,7 @@ pub struct BindingOutputOptions {
   pub outro: Option<AddonOutputOption>,
   // paths: OptionsPaths;
   #[napi(ts_type = "(BindingBuiltinPlugin | BindingPluginOptions | undefined)[]")]
-  pub plugins: Vec<BindingPluginOrParallelJsPluginPlaceholder>,
+  pub plugins: Vec<BindingPluginOrParallelJsPluginPlaceholder<'env>>,
   // preferConst: boolean;
   // preserveModules: boolean;
   // preserveModulesRoot: string | undefined;
@@ -117,8 +117,13 @@ pub struct BindingOutputOptions {
   #[napi(ts_type = "boolean | 'dce-only' | BindingMinifyOptions")]
   pub minify: Option<Either3<bool, String, BindingMinifyOptions>>,
   pub advanced_chunks: Option<BindingAdvancedChunksOptions>,
-  #[napi(ts_type = "'none' | 'preserve-legal'")]
-  pub comments: Option<String>,
+  #[napi(ts_type = "'none' | 'inline'")]
+  pub legal_comments: Option<String>,
   pub polyfill_require: Option<bool>,
-  pub target: Option<String>,
+  pub preserve_modules: Option<bool>,
+  pub target: Option<Either<String, Vec<String>>>,
+  pub virtual_dirname: Option<String>,
+  pub preserve_modules_root: Option<String>,
+  #[napi(ts_type = "'strict' | 'allow-extension' | 'exports-only' | false")]
+  pub preserve_entry_signatures: Option<Either<String, bool>>,
 }

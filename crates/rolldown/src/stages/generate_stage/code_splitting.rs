@@ -1,13 +1,14 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::VecDeque, path::Path};
 
-use crate::chunk_graph::ChunkGraph;
+use crate::{chunk_graph::ChunkGraph, stages::generate_stage::chunk_ext::ChunkDebugExt};
+use arcstr::ArcStr;
 use itertools::Itertools;
 use oxc_index::IndexVec;
 use rolldown_common::{Chunk, ChunkIdx, ChunkKind, Module, ModuleIdx, OutputFormat};
-use rolldown_utils::{BitSet, rustc_hash::FxHashMapExt};
+use rolldown_utils::{BitSet, commondir, rustc_hash::FxHashMapExt};
 use rustc_hash::FxHashMap;
 
-use super::GenerateStage;
+use super::{GenerateStage, chunk_ext::ChunkCreationReason};
 
 #[derive(Clone)]
 pub struct SplittingInfo {
@@ -41,82 +42,67 @@ impl GenerateStage<'_> {
 
     let mut entry_module_to_entry_chunk: FxHashMap<ModuleIdx, ChunkIdx> =
       FxHashMap::with_capacity(self.link_output.entries.len());
-    // Create chunk for each static and dynamic entry
-    for (entry_index, entry_point) in self.link_output.entries.iter().enumerate() {
-      let count: u32 = entry_index.try_into().expect("Too many entries, u32 overflowed.");
-      let mut bits = BitSet::new(entries_len);
-      bits.set_bit(count);
-      let Module::Normal(module) = &self.link_output.module_table.modules[entry_point.id] else {
-        continue;
-      };
-      let chunk = chunk_graph.add_chunk(Chunk::new(
-        entry_point.name.clone(),
-        entry_point.reference_id.clone(),
-        entry_point.file_name.clone(),
-        bits.clone(),
-        vec![],
-        ChunkKind::EntryPoint {
-          is_user_defined: module.is_user_defined_entry,
-          bit: count,
-          module: entry_point.id,
-        },
-        self.link_output.lived_entry_points.contains(&entry_point.id),
-      ));
-      bits_to_chunk.insert(bits, chunk);
-      entry_module_to_entry_chunk.insert(entry_point.id, chunk);
-    }
+    let input_base = ArcStr::from(
+      self
+        .get_common_dir_of_all_modules(self.link_output.module_table.modules.as_vec())
+        .unwrap_or_default(),
+    );
+    if self.options.preserve_modules {
+      let modules_len = self
+        .link_output
+        .module_table
+        .modules
+        .len()
+        .try_into()
+        .expect("Entry length exceeds u32::MAX");
+      for (idx, module) in self.link_output.module_table.modules.iter_enumerated() {
+        let Module::Normal(module) = module else {
+          continue;
+        };
 
-    // Determine which modules belong to which chunk. A module could belong to multiple chunks.
-    self.link_output.entries.iter().enumerate().for_each(|(i, entry_point)| {
-      if self.options.is_hmr_enabled() {
-        // If HMR is enabled, we need to make sure it belongs to at least one chunk even if no module reaches it.
-        self.determine_reachable_modules_for_entry(
-          self.link_output.runtime.id(),
-          i.try_into().expect("Too many entries, u32 overflowed."),
-          &mut index_splitting_info,
+        let count = idx.raw();
+        let mut bits = BitSet::new(modules_len);
+        bits.set_bit(count);
+        let mut chunk = Chunk::new(
+          None,
+          None,
+          None,
+          bits.clone(),
+          vec![],
+          ChunkKind::EntryPoint {
+            is_user_defined: module.is_user_defined_entry,
+            bit: count,
+            module: module.idx,
+          },
+          module.is_included(),
+          input_base.clone(),
         );
+        chunk.add_creation_reason(
+          ChunkCreationReason::PreserveModules {
+            is_user_defined_entry: module.is_user_defined_entry,
+            module_stable_id: &module.stable_id,
+          },
+          self.options,
+        );
+        let chunk = chunk_graph.add_chunk(chunk);
+        chunk_graph.add_module_to_chunk(module.idx, chunk);
+        // bits_to_chunk.insert(bits, chunk); // This line is intentionally commented out because `bits_to_chunk` is not used in this loop. It is updated elsewhere in the `init_entry_point` and `split_chunks` methods.
+        entry_module_to_entry_chunk.insert(module.idx, chunk);
       }
-      self.determine_reachable_modules_for_entry(
-        entry_point.id,
-        i.try_into().expect("Too many entries, u32 overflowed."),
+    } else {
+      self.init_entry_point(
+        &mut chunk_graph,
+        &mut bits_to_chunk,
+        &mut entry_module_to_entry_chunk,
+        entries_len,
+        &input_base,
+      );
+      self.split_chunks(
         &mut index_splitting_info,
+        &mut chunk_graph,
+        &mut bits_to_chunk,
+        &input_base,
       );
-    });
-
-    let mut module_to_assigned: IndexVec<ModuleIdx, bool> =
-      oxc_index::index_vec![false; self.link_output.module_table.modules.len()];
-
-    self.apply_advanced_chunks(&index_splitting_info, &mut module_to_assigned, &mut chunk_graph);
-
-    // 1. Assign modules to corresponding chunks
-    // 2. Create shared chunks to store modules that belong to multiple chunks.
-    for normal_module in self.link_output.module_table.modules.iter().filter_map(Module::as_normal)
-    {
-      if !normal_module.meta.is_included() {
-        continue;
-      }
-
-      if module_to_assigned[normal_module.idx] {
-        continue;
-      }
-
-      module_to_assigned[normal_module.idx] = true;
-
-      let bits = &index_splitting_info[normal_module.idx].bits;
-      debug_assert!(
-        !bits.is_empty(),
-        "Empty bits means the module is not reachable, so it should bail out with `is_included: false` {:?}",
-        normal_module.stable_id
-      );
-
-      if let Some(chunk_id) = bits_to_chunk.get(bits).copied() {
-        chunk_graph.add_module_to_chunk(normal_module.idx, chunk_id);
-      } else {
-        let chunk = Chunk::new(None, None, None, bits.clone(), vec![], ChunkKind::Common, true);
-        let chunk_id = chunk_graph.add_chunk(chunk);
-        chunk_graph.add_module_to_chunk(normal_module.idx, chunk_id);
-        bits_to_chunk.insert(bits.clone(), chunk_id);
-      }
     }
 
     // Sort modules in each chunk by execution order
@@ -197,34 +183,239 @@ impl GenerateStage<'_> {
 
     chunk_graph.sorted_chunk_idx_vec = sorted_chunk_idx_vec;
     chunk_graph.entry_module_to_entry_chunk = entry_module_to_entry_chunk;
-
+    self.merge_cjs_namespace(&mut chunk_graph);
     chunk_graph
+  }
+
+  fn merge_cjs_namespace(&mut self, chunk_graph: &mut ChunkGraph) {
+    for (k, v) in &self.link_output.safely_merge_cjs_ns_map {
+      for symbol_ref in v
+        .iter()
+        .filter(|item| {
+          self.link_output.module_table.modules[item.owner].as_normal().unwrap().is_included()
+            && self.link_output.metas[item.owner].wrap_kind.is_none()
+        })
+        // Determine safely merged cjs ns binding should put in where
+        // We should put it in the importRecord which first reference the cjs ns binding.
+        .sorted_by_key(|item| self.link_output.module_table.modules[item.owner].exec_order())
+      {
+        let owner = symbol_ref.owner;
+        let chunk_idx = chunk_graph.module_to_chunk[owner].expect("Module should be in chunk");
+        chunk_graph.safely_merge_cjs_ns_map_idx_vec[chunk_idx]
+          .entry(*k)
+          .or_default()
+          .push(*symbol_ref);
+      }
+    }
+
+    for (_, safely_merge_cjs_ns_map) in
+      chunk_graph.safely_merge_cjs_ns_map_idx_vec.iter_mut_enumerated()
+    {
+      for symbol_refs in safely_merge_cjs_ns_map.values_mut() {
+        let mut iter = symbol_refs.iter();
+        let first = iter.next();
+        if let Some(first) = first {
+          for symbol_ref in iter {
+            self.link_output.symbol_db.link(*symbol_ref, *first);
+          }
+        }
+      }
+    }
+  }
+
+  // ref:
+  // - https://github.com/rollup/rollup/blob/99d4bee3277b96b30e871fb471f6c7ed55f94850/src/Bundle.ts?plain=1#L267-L278
+  // - https://github.com/rollup/rollup/blob/99d4bee3277b96b30e871fb471f6c7ed55f94850/src/utils/commondir.ts?plain=1#L4-L24
+  pub fn get_common_dir_of_all_modules(&self, modules: &[Module]) -> Option<String> {
+    let mut ret: Option<String> = None;
+    let iter = modules.iter().filter_map(|m| match m {
+      Module::Normal(item) => {
+        if !item.is_included() {
+          return None;
+        }
+        if self.options.preserve_modules || item.is_user_defined_entry {
+          Path::new(item.id.as_ref()).is_absolute().then_some(item.id.as_ref())
+        } else {
+          None
+        }
+      }
+      Module::External(external_module) => {
+        if self.options.preserve_modules {
+          Path::new(external_module.id.as_str())
+            .is_absolute()
+            .then_some(external_module.id.as_ref())
+        } else {
+          None
+        }
+      }
+    });
+    let mut modules_count = 0;
+    for id in iter {
+      if let Some(ref mut ret_id) = ret {
+        *ret_id = commondir::extract_longest_common_path(ret_id.as_str(), id);
+      } else {
+        ret = Some(id.to_string());
+      }
+      modules_count += 1;
+    }
+    match modules_count {
+      0 => None,
+      1 => ret.and_then(|item| Path::new(&item).parent().map(|p| p.to_string_lossy().to_string())),
+      _ => ret,
+    }
+  }
+
+  fn init_entry_point(
+    &self,
+    chunk_graph: &mut ChunkGraph,
+    bits_to_chunk: &mut FxHashMap<BitSet, ChunkIdx>,
+    entry_module_to_entry_chunk: &mut FxHashMap<ModuleIdx, ChunkIdx>,
+    entries_len: u32,
+    input_base: &ArcStr,
+  ) {
+    // Create chunk for each static and dynamic entry
+    for (entry_index, entry_point) in self.link_output.entries.iter().enumerate() {
+      let count: u32 = entry_index.try_into().expect("Too many entries, u32 overflowed.");
+      let mut bits = BitSet::new(entries_len);
+      bits.set_bit(count);
+      let Module::Normal(module) = &self.link_output.module_table.modules[entry_point.id] else {
+        continue;
+      };
+      let mut chunk = Chunk::new(
+        entry_point.name.clone(),
+        entry_point.reference_id.clone(),
+        entry_point.file_name.clone(),
+        bits.clone(),
+        vec![],
+        ChunkKind::EntryPoint {
+          is_user_defined: module.is_user_defined_entry,
+          bit: count,
+          module: entry_point.id,
+        },
+        self.link_output.lived_entry_points.contains(&entry_point.id),
+        input_base.clone(),
+      );
+      chunk.add_creation_reason(
+        ChunkCreationReason::UserDefinedEntry {
+          debug_id: &module.debug_id,
+          entry_point_name: entry_point.name.as_ref(),
+        },
+        self.options,
+      );
+      let chunk = chunk_graph.add_chunk(chunk);
+
+      bits_to_chunk.insert(bits, chunk);
+      entry_module_to_entry_chunk.insert(entry_point.id, chunk);
+    }
+  }
+  fn split_chunks(
+    &self,
+    index_splitting_info: &mut IndexSplittingInfo,
+    chunk_graph: &mut ChunkGraph,
+    bits_to_chunk: &mut FxHashMap<BitSet, ChunkIdx>,
+    input_base: &ArcStr,
+  ) {
+    // Determine which modules belong to which chunk. A module could belong to multiple chunks.
+    self.link_output.entries.iter().enumerate().for_each(|(i, entry_point)| {
+      if self.options.is_hmr_enabled() {
+        // If HMR is enabled, we need to make sure it belongs to at least one chunk even if no module reaches it.
+        self.determine_reachable_modules_for_entry(
+          self.link_output.runtime.id(),
+          i.try_into().expect("Too many entries, u32 overflowed."),
+          index_splitting_info,
+        );
+      }
+      self.determine_reachable_modules_for_entry(
+        entry_point.id,
+        i.try_into().expect("Too many entries, u32 overflowed."),
+        index_splitting_info,
+      );
+    });
+
+    let mut module_to_assigned: IndexVec<ModuleIdx, bool> =
+      oxc_index::index_vec![false; self.link_output.module_table.modules.len()];
+
+    self.apply_advanced_chunks(
+      index_splitting_info,
+      &mut module_to_assigned,
+      chunk_graph,
+      input_base,
+    );
+
+    // 1. Assign modules to corresponding chunks
+    // 2. Create shared chunks to store modules that belong to multiple chunks.
+    for normal_module in self.link_output.module_table.modules.iter().filter_map(Module::as_normal)
+    {
+      if !normal_module.meta.is_included() {
+        continue;
+      }
+
+      if module_to_assigned[normal_module.idx] {
+        continue;
+      }
+
+      module_to_assigned[normal_module.idx] = true;
+
+      let bits = &index_splitting_info[normal_module.idx].bits;
+      debug_assert!(
+        !bits.is_empty(),
+        "Empty bits means the module is not reachable, so it should bail out with `is_included: false` {:?}",
+        normal_module.stable_id
+      );
+
+      if let Some(chunk_id) = bits_to_chunk.get(bits).copied() {
+        chunk_graph.add_module_to_chunk(normal_module.idx, chunk_id);
+      } else {
+        let mut chunk = Chunk::new(
+          None,
+          None,
+          None,
+          bits.clone(),
+          vec![],
+          ChunkKind::Common,
+          true,
+          input_base.clone(),
+        );
+        chunk.add_creation_reason(
+          ChunkCreationReason::CommonChunk { bits, link_output: self.link_output },
+          self.options,
+        );
+        let chunk_id = chunk_graph.add_chunk(chunk);
+        chunk_graph.add_module_to_chunk(normal_module.idx, chunk_id);
+        bits_to_chunk.insert(bits.clone(), chunk_id);
+      }
+    }
   }
 
   fn determine_reachable_modules_for_entry(
     &self,
-    module_id: ModuleIdx,
+    entry_module_idx: ModuleIdx,
     entry_index: u32,
     index_splitting_info: &mut IndexSplittingInfo,
   ) {
-    let Module::Normal(module) = &self.link_output.module_table.modules[module_id] else {
-      return;
-    };
-    let meta = &self.link_output.metas[module_id];
+    let mut q = VecDeque::from([entry_module_idx]);
 
-    if !module.meta.is_included() {
-      return;
+    while let Some(module_idx) = q.pop_front() {
+      let Module::Normal(module) = &self.link_output.module_table.modules[module_idx] else {
+        continue;
+      };
+
+      let meta = &self.link_output.metas[module_idx];
+
+      if !module.meta.is_included() {
+        continue;
+      }
+
+      if index_splitting_info[module_idx].bits.has_bit(entry_index) {
+        continue;
+      }
+
+      index_splitting_info[module_idx].bits.set_bit(entry_index);
+      index_splitting_info[module_idx].share_count += 1;
+
+      meta.dependencies.iter().copied().for_each(|dep_idx| {
+        q.push_back(dep_idx);
+      });
     }
-
-    if index_splitting_info[module_id].bits.has_bit(entry_index) {
-      return;
-    }
-
-    index_splitting_info[module_id].bits.set_bit(entry_index);
-    index_splitting_info[module_id].share_count += 1;
-
-    meta.dependencies.iter().copied().for_each(|dep_idx| {
-      self.determine_reachable_modules_for_entry(dep_idx, entry_index, index_splitting_info);
-    });
   }
 }

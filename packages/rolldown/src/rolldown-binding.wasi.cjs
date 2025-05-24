@@ -9,9 +9,9 @@ const { WASI: __nodeWASI } = require('node:wasi')
 const { Worker } = require('node:worker_threads')
 
 const {
-  instantiateNapiModuleSync: __emnapiInstantiateNapiModuleSync,
-  getDefaultContext: __emnapiGetDefaultContext,
   createOnMessage: __wasmCreateOnMessageForFsProxy,
+  getDefaultContext: __emnapiGetDefaultContext,
+  instantiateNapiModuleSync: __emnapiInstantiateNapiModuleSync,
 } = require('@napi-rs/wasm-runtime')
 
 const __rootDir = __nodePath.parse(process.cwd()).root
@@ -84,8 +84,9 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
     }
   },
 })
-
+module.exports = __napiModule.exports
 module.exports.BindingBundleEndEventData = __napiModule.exports.BindingBundleEndEventData
+module.exports.BindingBundleErrorEventData = __napiModule.exports.BindingBundleErrorEventData
 module.exports.BindingCallableBuiltinPlugin = __napiModule.exports.BindingCallableBuiltinPlugin
 module.exports.BindingError = __napiModule.exports.BindingError
 module.exports.BindingModuleInfo = __napiModule.exports.BindingModuleInfo
@@ -104,13 +105,16 @@ module.exports.BindingWatcherEvent = __napiModule.exports.BindingWatcherEvent
 module.exports.Bundler = __napiModule.exports.Bundler
 module.exports.ParallelJsPluginRegistry = __napiModule.exports.ParallelJsPluginRegistry
 module.exports.ParseResult = __napiModule.exports.ParseResult
+module.exports.ResolverFactory = __napiModule.exports.ResolverFactory
 module.exports.BindingBuiltinPluginName = __napiModule.exports.BindingBuiltinPluginName
 module.exports.BindingHookSideEffects = __napiModule.exports.BindingHookSideEffects
 module.exports.BindingLogLevel = __napiModule.exports.BindingLogLevel
 module.exports.BindingPluginOrder = __napiModule.exports.BindingPluginOrder
+module.exports.EnforceExtension = __napiModule.exports.EnforceExtension
 module.exports.ExportExportNameKind = __napiModule.exports.ExportExportNameKind
 module.exports.ExportImportNameKind = __napiModule.exports.ExportImportNameKind
 module.exports.ExportLocalNameKind = __napiModule.exports.ExportLocalNameKind
+module.exports.FilterTokenKind = __napiModule.exports.FilterTokenKind
 module.exports.getBufferOffset = __napiModule.exports.getBufferOffset
 module.exports.HelperMode = __napiModule.exports.HelperMode
 module.exports.ImportNameKind = __napiModule.exports.ImportNameKind
@@ -124,4 +128,5 @@ module.exports.registerPlugins = __napiModule.exports.registerPlugins
 module.exports.Severity = __napiModule.exports.Severity
 module.exports.shutdownAsyncRuntime = __napiModule.exports.shutdownAsyncRuntime
 module.exports.startAsyncRuntime = __napiModule.exports.startAsyncRuntime
+module.exports.sync = __napiModule.exports.sync
 module.exports.transform = __napiModule.exports.transform

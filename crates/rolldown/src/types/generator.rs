@@ -1,11 +1,11 @@
+use oxc_index::IndexVec;
 use rolldown_common::{
-  Chunk, ChunkIdx, InstantiatedChunk, Module, ModuleRenderOutput, NormalModule,
-  NormalizedBundlerOptions, SymbolRef,
+  Chunk, ChunkIdx, InstantiatedChunk, ModuleRenderOutput, NormalizedBundlerOptions, SymbolRef,
 };
 use rolldown_error::{BuildDiagnostic, BuildResult};
 use rolldown_plugin::SharedPluginDriver;
 use rolldown_rstr::Rstr;
-use rolldown_std_utils::OptionExt;
+use rolldown_utils::indexmap::FxIndexMap;
 use rustc_hash::FxHashMap;
 
 use crate::{chunk_graph::ChunkGraph, stages::link_stage::LinkStageOutput};
@@ -19,6 +19,14 @@ pub struct GenerateContext<'a> {
   pub plugin_driver: &'a SharedPluginDriver,
   pub warnings: Vec<BuildDiagnostic>,
   pub module_id_to_codegen_ret: Vec<Option<ModuleRenderOutput>>,
+  /// The key of the map is exported item symbol,
+  /// the value of the map is optional alias. e.g.
+  /// - chunkB.js
+  /// ```js
+  /// export const a = 10000000;
+  /// export {a as b}; // symbol_ref points to `a`, and alias is `b`
+  /// ```
+  pub render_export_items_index_vec: &'a IndexVec<ChunkIdx, FxIndexMap<SymbolRef, Vec<Rstr>>>,
 }
 
 impl GenerateContext<'_> {
@@ -72,21 +80,6 @@ impl GenerateContext<'_> {
       }
       _ => symbol_db.canonical_name_for(canonical_ref, canonical_names).to_string(),
     }
-  }
-
-  pub fn renderable_ecma_modules(&self) -> impl Iterator<Item = &NormalModule> {
-    self.chunk.modules.iter().copied().filter_map(move |id| {
-      let module = &self.link_output.module_table.modules[id];
-      let Module::Normal(module) = module else { return None };
-      if !module.is_included() {
-        return None;
-      }
-      let ast = &self.link_output.ast_table[module.ecma_ast_idx.unpack()].0;
-      if ast.is_body_empty() {
-        return None;
-      }
-      Some(&**module)
-    })
   }
 }
 

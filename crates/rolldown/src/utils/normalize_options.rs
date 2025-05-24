@@ -1,9 +1,10 @@
 use std::{borrow::Cow, path::Path};
 
-use oxc::transformer::{ESTarget, InjectGlobalVariablesConfig, TransformOptions};
+use oxc::transformer::TransformOptions;
+use oxc::transformer_plugins::InjectGlobalVariablesConfig;
 use rolldown_common::{
-  Comments, GlobalsOutputOption, InjectImport, MinifyOptions, ModuleType, NormalizedBundlerOptions,
-  NormalizedJsxOptions, OutputFormat, Platform,
+  GlobalsOutputOption, InjectImport, LegalComments, MinifyOptions, ModuleType,
+  NormalizedBundlerOptions, NormalizedJsxOptions, OutputFormat, Platform,
 };
 use rolldown_error::{BuildDiagnostic, InvalidOptionType};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -47,12 +48,7 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
 
   let format = raw_options.format.unwrap_or(crate::OutputFormat::Esm);
 
-  let platform = raw_options.platform.unwrap_or(match format {
-    OutputFormat::Cjs => Platform::Node,
-    OutputFormat::Esm | OutputFormat::App | OutputFormat::Iife | OutputFormat::Umd => {
-      Platform::Browser
-    }
-  });
+  let platform = raw_options.platform.unwrap_or(Platform::Browser);
 
   let minify: MinifyOptions = raw_options.minify.unwrap_or_default().into();
 
@@ -127,14 +123,14 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
           .iter()
           .map(|raw| match raw {
             InjectImport::Named { imported, alias, from } => {
-              oxc::transformer::InjectImport::named_specifier(
+              oxc::transformer_plugins::InjectImport::named_specifier(
                 from,
                 Some(imported),
                 alias.as_deref().unwrap_or(imported),
               )
             }
             InjectImport::Namespace { alias, from } => {
-              oxc::transformer::InjectImport::namespace_specifier(from, alias)
+              oxc::transformer_plugins::InjectImport::namespace_specifier(from, alias)
             }
           })
           .collect()
@@ -171,8 +167,11 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
     },
   );
   let target = raw_options.target.unwrap_or_default();
-  let mut transform_options =
-    raw_options.transform.unwrap_or_else(|| TransformOptions::from(ESTarget::from(target)));
+  let mut transform_options = raw_options
+    .transform
+    .or_else(|| TransformOptions::from_target_list(&target).ok())
+    .unwrap_or_default();
+
   let jsx = match raw_options.jsx.unwrap_or_default() {
     rolldown_common::Jsx::Disable => NormalizedJsxOptions::Disable,
     rolldown_common::Jsx::Preserve => NormalizedJsxOptions::Preserve,
@@ -184,11 +183,10 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
   };
   transform_options.jsx.jsx_plugin = matches!(jsx, NormalizedJsxOptions::Enable);
 
+  let cwd =
+    raw_options.cwd.unwrap_or_else(|| std::env::current_dir().expect("Failed to get current dir"));
   let normalized = NormalizedBundlerOptions {
     input: raw_options.input.unwrap_or_default(),
-    cwd: raw_options
-      .cwd
-      .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current dir")),
     external: raw_options.external,
     treeshake: raw_options.treeshake.into_normalized_options(),
     platform,
@@ -239,9 +237,9 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
     checks: raw_options.checks.unwrap_or_default().into(),
     jsx,
     watch: raw_options.watch.unwrap_or_default(),
-    comments: raw_options.comments.unwrap_or(Comments::Preserve),
+    legal_comments: raw_options.legal_comments.unwrap_or(LegalComments::Inline),
     drop_labels: FxHashSet::from_iter(raw_options.drop_labels.unwrap_or_default()),
-    target,
+    target: target.into(),
     keep_names: raw_options.keep_names.unwrap_or_default(),
     polyfill_require: raw_options.polyfill_require.unwrap_or(true),
     defer_sync_scan_data: raw_options.defer_sync_scan_data,
@@ -250,6 +248,21 @@ pub fn normalize_options(mut raw_options: crate::BundlerOptions) -> NormalizeOpt
       .make_absolute_externals_relative
       .unwrap_or_default(),
     invalidate_js_side_cache: raw_options.invalidate_js_side_cache,
+    mark_module_loaded: raw_options.mark_module_loaded,
+    log_level: raw_options.log_level,
+    on_log: raw_options.on_log,
+    preserve_modules: raw_options.preserve_modules.unwrap_or_default(),
+    virtual_dirname: raw_options.virtual_dirname.unwrap_or_else(|| "_virtual".to_string()),
+    preserve_modules_root: raw_options.preserve_modules_root.map(|preserve_modules_root| {
+      let p = Path::new(&preserve_modules_root);
+      if p.is_absolute() {
+        preserve_modules_root
+      } else {
+        cwd.join(p).to_string_lossy().to_string()
+      }
+    }),
+    cwd,
+    preserve_entry_signatures: raw_options.preserve_entry_signatures.unwrap_or_default(),
   };
 
   NormalizeOptionsReturn { options: normalized, resolve_options: raw_resolve, warnings }

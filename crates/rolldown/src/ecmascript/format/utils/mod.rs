@@ -98,3 +98,16 @@ pub fn render_modules_with_peek_runtime_module_at_first<'a>(
     },
   );
 }
+
+pub fn render_chunk_directives<'a, T: Iterator<Item = &'a &'a str>>(directives: T) -> String {
+  let mut ret = String::new();
+  for d in directives {
+    ret.push_str(d);
+    if (d).ends_with(';') {
+      ret.push('\n');
+    } else {
+      ret.push_str(";\n");
+    }
+  }
+  ret
+}

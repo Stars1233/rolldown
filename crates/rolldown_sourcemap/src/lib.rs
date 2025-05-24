@@ -67,7 +67,7 @@ pub fn collapse_sourcemaps(mut sourcemap_chain: Vec<&SourceMap>) -> SourceMap {
     first_map.get_names().map(Into::into).collect::<Vec<_>>(),
     None,
     first_map.get_sources().map(Into::into).collect::<Vec<_>>(),
-    first_map.get_source_contents().map(|x| x.map(Into::into).collect::<Vec<_>>()),
+    first_map.get_source_contents().map(|x| x.map(Into::into)).collect::<Vec<_>>(),
     tokens,
     None,
   )
@@ -78,7 +78,7 @@ fn test_collapse_sourcemaps() {
   use crate::{SourceJoiner, SourceMapSource, collapse_sourcemaps};
   use oxc::{
     allocator::Allocator,
-    codegen::{CodeGenerator, CodegenOptions, CodegenReturn},
+    codegen::{Codegen, CodegenOptions, CodegenReturn},
     parser::Parser,
     span::SourceType,
   };
@@ -92,8 +92,9 @@ fn test_collapse_sourcemaps() {
   let source_text = "const foo = 1; console.log(foo);\n".to_string();
   let source_type = SourceType::from_path(&filename).unwrap();
   let ret1 = Parser::new(&allocator, &source_text, source_type).parse();
-  let CodegenReturn { map, code, .. } = CodeGenerator::new()
+  let CodegenReturn { map, code, .. } = Codegen::new()
     .with_options(CodegenOptions {
+      comments: false,
       source_map_path: Some(filename.into()),
       ..CodegenOptions::default()
     })
@@ -103,7 +104,7 @@ fn test_collapse_sourcemaps() {
   let filename = "bar.js".to_string();
   let source_text = "const bar = 2; console.log(bar);\n".to_string();
   let ret2: oxc::parser::ParserReturn = Parser::new(&allocator, &source_text, source_type).parse();
-  let CodegenReturn { map, code, .. } = CodeGenerator::new()
+  let CodegenReturn { map, code, .. } = Codegen::new()
     .with_options(CodegenOptions {
       source_map_path: Some(filename.into()),
       ..CodegenOptions::default()
@@ -119,8 +120,9 @@ fn test_collapse_sourcemaps() {
 
   let filename = "chunk.js".to_string();
   let ret3 = Parser::new(&allocator, &source_text, source_type).parse();
-  let CodegenReturn { map, code, .. } = CodeGenerator::new()
+  let CodegenReturn { map, code, .. } = Codegen::new()
     .with_options(CodegenOptions {
+      comments: false,
       source_map_path: Some(filename.into()),
       ..CodegenOptions::default()
     })

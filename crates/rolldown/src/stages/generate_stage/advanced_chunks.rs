@@ -7,7 +7,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{chunk_graph::ChunkGraph, types::linking_metadata::LinkingMetadataVec};
 
-use super::{GenerateStage, code_splitting::IndexSplittingInfo};
+use super::{
+  GenerateStage,
+  chunk_ext::{ChunkCreationReason, ChunkDebugExt},
+  code_splitting::IndexSplittingInfo,
+};
 
 // `ModuleGroup` is a temporary representation of `Chunk`. A valid `ModuleGroup` would be converted to a `Chunk` in the end.
 #[derive(Debug)]
@@ -52,6 +56,7 @@ impl GenerateStage<'_> {
     index_splitting_info: &IndexSplittingInfo,
     module_to_assigned: &mut IndexVec<ModuleIdx, bool>,
     chunk_graph: &mut ChunkGraph,
+    input_base: &ArcStr,
   ) {
     let Some(chunking_options) = &self.options.advanced_chunks else {
       return;
@@ -160,6 +165,7 @@ impl GenerateStage<'_> {
         vec![],
         ChunkKind::Common,
         true,
+        input_base.clone(),
       );
       let chunk_idx = chunk_graph.add_chunk(runtime_chunk);
       module_groups.iter_mut().for_each(|group| {
@@ -271,7 +277,7 @@ impl GenerateStage<'_> {
           }
         }
       }
-      let chunk = Chunk::new(
+      let mut chunk = Chunk::new(
         Some(this_module_group.name.clone()),
         None,
         None,
@@ -282,6 +288,11 @@ impl GenerateStage<'_> {
         vec![],
         ChunkKind::Common,
         true,
+        input_base.clone(),
+      );
+      chunk.add_creation_reason(
+        ChunkCreationReason::AdvancedChunkGroup(&this_module_group.name),
+        self.options,
       );
 
       let chunk_idx = chunk_graph.add_chunk(chunk);

@@ -13,7 +13,8 @@ use anyhow::Result;
 
 use arcstr::ArcStr;
 use rolldown_common::{
-  GetLocalDbMut, HmrOutput, NormalizedBundlerOptions, ScanMode, SharedFileEmitter, SymbolRefDb,
+  GetLocalDbMut, HmrOutput, Module, NormalizedBundlerOptions, ScanMode, SharedFileEmitter,
+  SymbolRefDb,
 };
 use rolldown_debug::{action, trace_action};
 use rolldown_error::{BuildDiagnostic, BuildResult};
@@ -87,6 +88,12 @@ impl Bundler {
     Ok(())
   }
 
+  // The rollup always crate a new build at watch mode, it cloud be call multiply times.
+  // Here only reset the closed flag to make it possible to call again.
+  pub fn reset_closed(&mut self) {
+    self.closed = false;
+  }
+
   #[tracing::instrument(target = "devtool", level = "debug", skip_all)]
   pub async fn scan(&mut self, changed_ids: Vec<ArcStr>) -> BuildResult<NormalizedScanStageOutput> {
     trace_action!(action::BuildStart { action: "BuildStart" });
@@ -122,6 +129,8 @@ impl Bundler {
 
     let scan_stage_output =
       self.normalize_scan_stage_output_and_update_cache(scan_stage_output, is_full_scan_mode);
+
+    Self::trace_action_module_graph_ready(&scan_stage_output);
     self.plugin_driver.build_end(None).await?;
     trace_action!(action::BuildEnd { action: "BuildEnd" });
     Ok(scan_stage_output)
@@ -254,11 +263,19 @@ impl Bundler {
   }
 
   pub async fn generate_hmr_patch(&mut self, changed_files: Vec<String>) -> BuildResult<HmrOutput> {
+    self.hmr_manager.as_mut().expect("HMR manager is not initialized").hmr(changed_files).await
+  }
+
+  pub async fn hmr_invalidate(
+    &mut self,
+    file: String,
+    first_invalidated_by: Option<String>,
+  ) -> BuildResult<HmrOutput> {
     self
       .hmr_manager
       .as_mut()
       .expect("HMR manager is not initialized")
-      .generate_hmr_patch(changed_files)
+      .hmr_invalidate(file, first_invalidated_by)
       .await
   }
 
@@ -274,6 +291,41 @@ impl Bundler {
       let cache_db = snapshot.symbol_ref_db.local_db_mut(idx);
       let (scoping, _) = db_for_module.ast_scopes.into_inner();
       cache_db.ast_scopes.set_scoping(scoping);
+    }
+  }
+
+  fn trace_action_module_graph_ready(scan_stage_output: &NormalizedScanStageOutput) {
+    if tracing::enabled!(tracing::Level::TRACE) {
+      let modules = scan_stage_output
+        .module_table
+        .modules
+        .iter()
+        .map(|m| match m {
+          Module::Normal(module) => action::Module {
+            id: module.id.to_string(),
+            is_external: false,
+            imports: Some(
+              module
+                .import_records
+                .iter()
+                .map(|r| action::ModuleImport {
+                  id: scan_stage_output.module_table.modules[r.resolved_module].id().to_string(),
+                  kind: r.kind.to_string(),
+                  module_request: r.module_request.to_string(),
+                })
+                .collect(),
+            ),
+            importers: Some(module.importers.iter().map(|i| i.to_string()).collect()),
+          },
+          Module::External(module) => action::Module {
+            id: module.id.to_string(),
+            is_external: true,
+            imports: None,
+            importers: None,
+          },
+        })
+        .collect();
+      trace_action!(action::ModuleGraphReady { action: "ModuleGraphReady", modules });
     }
   }
 }

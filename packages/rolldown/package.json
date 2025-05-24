@@ -1,6 +1,6 @@
 {
   "name": "rolldown",
-  "version": "1.0.0-beta.8",
+  "version": "1.0.0-beta.9",
   "description": "Fast JavaScript/TypeScript bundler in Rust with Rollup-compatible API.",
   "type": "commonjs",
   "homepage": "https://rolldown.rs/",
@@ -34,11 +34,19 @@
       "require": "./dist/index.cjs",
       "import": "./dist/index.mjs"
     },
+    "./config": {
+      "require": "./dist/config.cjs",
+      "import": "./dist/config.mjs"
+    },
     "./experimental": {
       "require": "./dist/experimental-index.cjs",
       "import": "./dist/experimental-index.mjs"
     },
-    "./parallel-plugin": {
+    "./filter": {
+      "require": "./dist/filter-index.cjs",
+      "import": "./dist/filter-index.mjs"
+    },
+    "./parallelPlugin": {
       "require": "./dist/parallel-plugin.cjs",
       "import": "./dist/parallel-plugin.mjs"
     },
@@ -58,18 +66,18 @@
   "scripts": {
     "# Scrips for binding #": "_",
     "artifacts": "napi artifacts --cwd ./src --package-json-path ../package.json -o=../artifacts --npm-dir ../npm",
-    "build-binding": "tsx ./build-binding.mts",
+    "build-binding": "oxnode ./build-binding.mts",
     "build-binding:release": "pnpm build-binding --release",
     "build-binding:wasi": "pnpm build-binding --target wasm32-wasip1-threads",
     "build-binding:wasi:release": "pnpm build-binding --profile release-wasi --target wasm32-wasip1-threads",
     "# Scrips for node #": "_",
-    "build-node": "tsx ./build.ts",
+    "build-node": "oxnode ./build.ts",
     "build-types-check": "tsc -p ./tsconfig.check.json",
-    "build-js-glue": "pnpm run --sequential \"/^build-(types|node|types-check)$/\"",
-    "build-native:debug": "pnpm run --sequential \"/^build-(binding|js-glue)$/\"",
-    "build-native:release": "pnpm run --sequential \"/^build-(binding:release|js-glue)$/\"",
-    "build-browser:debug": "cross-env BROWSER_PKG=1 pnpm run --sequential \"/^build-(binding|binding:wasi|node)$/\"",
-    "build-browser:release": "cross-env BROWSER_PKG=1 pnpm run --sequential \"/^build-(binding|binding:wasi:release|node)$/\"",
+    "build-js-glue": "pnpm run --sequential '/^build-(types|node|types-check)$/'",
+    "build-native:debug": "pnpm run --sequential '/^build-(binding|js-glue)$/'",
+    "build-native:release": "pnpm run --sequential '/^build-(binding:release|js-glue)$/'",
+    "build-browser:debug": "BROWSER_PKG=1 pnpm run --sequential '/^build-(binding|binding:wasi|node)$/'",
+    "build-browser:release": "BROWSER_PKG=1 pnpm run --sequential '/^build-(binding|binding:wasi:release|node)$/'",
     "# Scrips for docs #": "_",
     "extract-options-doc": "typedoc"
   },
@@ -100,33 +108,26 @@
     "dtsHeader": "type MaybePromise<T> = T | Promise<T>\ntype Nullable<T> = T | null | undefined\ntype VoidNullable<T = void> = T | null | undefined | void\nexport type BindingStringOrRegex = string | RegExp\n\n"
   },
   "dependencies": {
-    "@oxc-project/types": "0.66.0",
-    "@valibot/to-json-schema": "1.0.0",
-    "ansis": "^3.17.0",
-    "valibot": "1.0.0"
-  },
-  "peerDependencies": {
-    "@oxc-project/runtime": "0.66.0"
-  },
-  "peerDependenciesMeta": {
-    "@oxc-project/runtime": {
-      "optional": true
-    }
+    "@oxc-project/runtime": "catalog:",
+    "@oxc-project/types": "catalog:",
+    "@rolldown/pluginutils": "workspace:*",
+    "ansis": "^4.0.0"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.0.0-alpha.77",
-    "@napi-rs/wasm-runtime": "^0.2.4",
-    "@oxc-node/core": "^0.0.22",
+    "@napi-rs/cli": "3.0.0-alpha.80",
+    "@napi-rs/wasm-runtime": "^0.2.10",
+    "@oxc-node/cli": "catalog:",
     "@rolldown/testing": "workspace:*",
     "@types/fs-extra": "^11.0.4",
     "@types/lodash-es": "^4.17.12",
+    "@valibot/to-json-schema": "1.2.0",
     "consola": "^3.4.2",
     "emnapi": "^1.2.0",
     "execa": "^9.2.0",
     "fs-extra": "^11.2.0",
     "glob": "^11.0.0",
     "locate-character": "^3.0.0",
-    "oxc-parser": "^0.66.0",
+    "oxc-parser": "catalog:",
     "pathe": "^2.0.3",
     "remeda": "^2.10.0",
     "rolldown": "workspace:*",
@@ -134,11 +135,11 @@
     "rollup": "^4.18.0",
     "signal-exit": "4.1.0",
     "source-map": "^0.7.4",
-    "tsx": "^4.19.2",
     "type-fest": "^4.20.0",
     "typedoc": "^0.28.0",
     "typescript": "^5.7.3",
-    "unbuild": "^3.0.0"
+    "unbuild": "^3.0.0",
+    "valibot": "1.1.0"
   },
   "optionalDependencies": {
     "@rolldown/binding-darwin-arm64": "workspace:*",
