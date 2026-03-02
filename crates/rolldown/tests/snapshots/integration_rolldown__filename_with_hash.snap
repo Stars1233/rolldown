@@ -5934,6 +5934,10 @@ expression: output
 
 - main-!~{000}~.js => main-lM0Z7bta.js
 
+# tests/rolldown/topics/keep_names/class_decl_self_ref_deconflict
+
+- main-!~{000}~.js => main-btz8NE2L.js
+
 # tests/rolldown/topics/keep_names/declaration
 
 - main-!~{000}~.js => main-DCSt6GdC.js
@@ -5975,6 +5979,10 @@ expression: output
 # tests/rolldown/topics/keep_names/issue_7852
 
 - main-!~{000}~.js => main-B0IuB-dW.js
+
+# tests/rolldown/topics/keep_names/issue_8513
+
+- main-!~{000}~.js => main-DS3J4qXC.js
 
 # tests/rolldown/topics/keep_names/parenthesized_default_export
 
